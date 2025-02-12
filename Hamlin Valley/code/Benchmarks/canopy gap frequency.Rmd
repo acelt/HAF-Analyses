@@ -1,0 +1,78 @@
+---
+title: "Canopy Gap"
+author: "Alex Traynor"
+date: "6/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+
+## Set variable names
+
+```{r cars}
+## read in CCDO AIM and LMF data from Data Portal
+lmf <- read.csv("C:/Users/alaurencetraynor/Documents/2019/Analysis/Hamlin Valley/documentation/ccdo_lmf.csv")
+aim <- read.csv("C:/Users/alaurencetraynor/Documents/2019/Analysis/Hamlin Valley/documentation/ccdo_aim.csv")
+
+# grab variables which matter 
+var <- c("Date.Visited",  "Ecological.Site.ID", "Gap.Cover.25.to.50.Pct","Gap.Cover.51.to.100.Pct","Gap.Cover.101.to.200.Pct","Gap.Cover.200.Plus.Pct","Gap.Cover.25.Plus.Pct","Primary.Key")
+
+lmf_gap <-  lmf[,colnames(lmf) %in% var]
+aim_gap <-  aim[,colnames(aim) %in% var]
+
+# add aim/lmf source
+lmf_gap[["source"]] <- "lmf"
+aim_gap[["source"]] <- "aim"
+
+# bind together
+ccdo_gap <- rbind(aim_gap,lmf_gap)
+```
+
+## Summarize
+
+```{r}
+nrow(ccdo_gap) # 259 plots
+length(unique(ccdo_gap[["Ecological.Site.ID"]])) # 70 Ecological Sites
+
+# filter plots to those that fall in ecol sites in the hamlin valley
+es_list <-  c("R028AY308UT","R028AY230UT","R028AY221UT","R028AY035NV","R028AY220UT","R028AY226UT")
+
+ccdo_gap <- ccdo_gap[ccdo_gap[["Ecological.Site.ID"]] %in% es_list,]
+length(unique(ccdo_gap$Primary.Key)) # 23 plots
+
+# fix factor levels
+ccdo_gap$Ecological.Site.ID <- as.character(ccdo_gap$Ecological.Site.ID)
+ccdo_gap$Ecological.Site.ID <- as.factor(ccdo_gap$Ecological.Site.ID)
+
+# pivot long
+ccdo_gap_long <- pivot_longer(ccdo_gap, cols = c(3:7) )
+
+# plot and look at spread of data
+ggplot(ccdo_gap_long, aes(x=name, y = value, col = Ecological.Site.ID))+
+  geom_boxplot()
+
+# get some summary stats
+gap_summary <- ccdo_gap_long %>%
+  group_by(name, Ecological.Site.ID)%>%
+  summarise(avg = mean(value), std = sd(value))
+
+gap_summary$lower <- gap_summary$avg-gap_summary$std
+gap_summary$upper <- gap_summary$avg+gap_summary$std
+
+dodge1 <- position_dodge(width = 0.5)
+
+ggplot(gap_summary, aes(x=name, y = avg, col = Ecological.Site.ID))+
+  geom_point(position = dodge1)+
+  geom_errorbar(aes(ymin=lower, ymax=upper), position = dodge1)+
+  labs(y = "Mean % in Canopy Gap (+/- Standard Deviation)", x = "Canopy Gap Size class", title = "Cedar City FO AIM")+
+  theme_classic(base_size = 16)
+
+
+```
+Filter based on treatments
+```{r}
+
+```
+
