@@ -1,0 +1,152 @@
+---
+title: "Brown Bench Site Scale HAF Weighted Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+#### Overview
+- Proportional area estimates for 3 different reporting units:
+  1. Each Seasonal Use Area (SUA) within the Brown's Bench fine-scale area
+  2. Allotment group 1
+  3. Allotment group 2
+- Include AIM, LMF, and modified HAF plots 
+- Sampling designs include: 
+  1. LMF - track down original sample design - 
+  2. Two modified HAF shiny tool designs (2017 & 2018) - looks good
+  3. Elko: Track these down 
+    - 2011 - \ProjectsNational\AIM\Projects\NV\State\Data\Sample_Design\AIM_SDD_NVAIM_20160106.gdb
+    - 2015 - \ProjectsNational\AIM\Projects\NV\State\Data\Sample_Design\AIM_SDD_NVAIM_20160106.gdb 
+    - 2017 (actually 2016 design) - (not strata?)\ProjectsNational\AIM\Projects\NV\State\Data\Sample_Design\2016\NV_StateOffice_2016-2020_WORKINGCOPY.gdb
+  4. Burley FO AIM 2016 - \ProjectsNational\AIM\Projects\ID\Burley_FO\Data\Sample Design\2016\
+  5. Jarbidge 2017 - \ProjectsNational\AIM\Projects\ID\Jarbridge\Data\SampleDesign\2017\ID_JarbridgeFO_2017-2021_SDD.gdb
+  6. ID state ESD ??? - these are basically targeted points so leave out of weighted analysis
+- Area includes the Burley (ID), Jarbidge (ID) and Elko (NV) field offices
+
+
+#### SG code examples from Anthony:
+Parent folder:  T:\ProjectsNational\GRSG\HAF\Assessments_archived_032019\OR_2017_Warners\Sitescale
+Code blocks:  T:\ProjectsNational\GRSG\HAF\Assessments_archived_032019\OR_2017_Warners\Sitescale\Methods\Code
+I think the heavy lifter is the proportions.r file
+Outputs we provided back to the field:  T:\ProjectsNational\GRSG\HAF\Assessments_archived_032019\OR_2017_Warners\Sitescale\Results\
+
+#### Setup
+Set local library path and load required packages
+```{r setup, eval =FALSE}
+.libPaths("C:/Users/alaurencetraynor/Documents/2019/R/win-library/3.6")
+library(aim.analysis)
+library(sp)
+```
+#### Defaults
+```{r}
+name <- "Brown's Bench"
+projection <- sp::CRS("+proj=aea")
+```
+
+#### Filepaths and filenames
+### Filepaths
+# The filepath to the folder where we have all the spatial data
+```{r}
+path_spatial <- "C:/Users/alaurencetraynor/Documents/2019/Analysis/BrownsBenchSiteScaleHAF/bb_sitescale_haf/Analysis/Proportional_Analysis_Request/spatial"
+```
+# The filepath to the folder where we have the Excel stuff
+
+```{r}
+path_tabular <- "C:/Users/alaurencetraynor/Documents/2019/Analysis/BrownsBenchSiteScaleHAF/bb_sitescale_haf/Analysis/Proportional_Analysis_Request/tabular"
+```
+
+### Filenames
+```{r}
+reporting_unit_filenames 
+
+design_filenames
+
+terradat_filename
+
+additional_points_filename
+
+benchmarks_filename
+```
+
+
+###### Read in ######
+#### Reporting unit(s)
+reporting_units_polygons
+
+#### Sample designs
+designs
+
+#### TerrADat
+terradat_points
+
+#### The additional_points
+additional_points
+
+#### Benchmark Tool
+benchmarks
+
+#### Plot Status Workbook?
+
+
+
+###### Sort out points ######
+#### Prepare TerrADat points
+
+# Also we need to get the additional points in there
+# But not any points that are already in there
+terradat_points
+
+# And add reporting unit information
+terradat_points
+
+# And make sure that the fates are correct
+
+
+### Add benchmark values
+# First is benchmark groups
+benchmark_group_lut
+
+# Then apply the benchmarks by benchmark group
+terradat_benchmarked
+
+#### Create combined points shapefile
+### Combine all sample design points
+design_points
+
+### Add plot status (if necessary)
+
+
+### Replace all sampled points with their TerrADat counterparts
+all_points
+
+# There are problems with the design points relating to the additional points
+
+# But seriously, add reporting units
+all_points
+
+###### Sort out polygons ######
+#### Restrict input polygons to reporting unit(s)
+strata_clipped
+
+#### Create weight category polygons
+wgtcat_polygons
+
+#### Add weight categories to the points
+all_points
+
+
+###### Analyze ######
+#### Generate the weights
+weight_info
+
+# Make sure the benchmark information is associated with all_points
+benchmarked_points
+
+# Analyze
+analysis
+
+###### Write results ######
+
+```{r}
+
+```
+

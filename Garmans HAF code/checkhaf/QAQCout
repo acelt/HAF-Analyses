@@ -1,0 +1,2416 @@
+
+R version 3.4.0 (2017-04-21) -- "You Stupid Darkness"
+Copyright (C) 2017 The R Foundation for Statistical Computing
+Platform: i386-w64-mingw32/i386 (32-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> ## Performs QA/QC checks on HAF points sent to the NOC to derive weights and weighted estimates of HAF categories.
+> ##
+> ##########################################################
+> ##########################################################
+> library(raster)
+Loading required package: sp
+Warning message:
+package 'sp' was built under R version 3.4.1 
+> library(tidyverse)
+Loading tidyverse: ggplot2
+Loading tidyverse: tibble
+Loading tidyverse: tidyr
+Loading tidyverse: readr
+Loading tidyverse: purrr
+Loading tidyverse: dplyr
+Conflicts with tidy packages ---------------------------------------------------
+extract(): tidyr, raster
+filter():  dplyr, stats
+lag():     dplyr, stats
+select():  dplyr, raster
+Warning messages:
+1: package 'ggplot2' was built under R version 3.4.1 
+2: package 'tibble' was built under R version 3.4.1 
+3: package 'tidyr' was built under R version 3.4.1 
+4: package 'purrr' was built under R version 3.4.1 
+5: package 'dplyr' was built under R version 3.4.1 
+> library(stringr)
+Warning message:
+package 'stringr' was built under R version 3.4.1 
+> library(xlsx)
+Loading required package: rJava
+Loading required package: xlsxjars
+> library(sp)
+> library(rgdal)
+rgdal: version: 1.2-8, (SVN revision 663)
+ Geospatial Data Abstraction Library extensions to R successfully loaded
+ Loaded GDAL runtime: GDAL 2.0.1, released 2015/09/15
+ Path to GDAL shared files: \\ilmnirm3ds1.blm.doi.net/nr/Users/sgarman/My Documents/R/win-library/3.4/rgdal/gdal
+ Loaded PROJ.4 runtime: Rel. 4.9.2, 08 September 2015, [PJ_VERSION: 492]
+ Path to PROJ.4 shared files: \\ilmnirm3ds1.blm.doi.net/nr/Users/sgarman/My Documents/R/win-library/3.4/rgdal/proj
+ Linking to sp version: 1.2-5 
+Warning message:
+package 'rgdal' was built under R version 3.4.1 
+> library(rgeos)
+rgeos version: 0.3-23, (SVN revision 546)
+ GEOS runtime version: 3.5.0-CAPI-1.9.0 r4084 
+ Linking to sp version: 1.2-5 
+ Polygon checking: TRUE 
+
+Warning message:
+package 'rgeos' was built under R version 3.4.1 
+> library(maptools)
+Checking rgeos availability: TRUE
+> library(arcgisbinding)
+*** Please call arc.check_product() to  define a desktop license.
+> library(digest)
+> library(spsurvey)
+
+Version 3.3 of the spsurvey package was loaded successfully.
+
+> arc.check_product()
+product: ArcGIS Desktop ( 10.3.1.4959 )
+license: Advanced 
+> ## Modification of flex.erase() written by Nelson Stauffer
+> 
+> ## flex.clip() - clips spatial polygon data frames using ARCPY.  see flex.erase() to erase spatial polygon data frames.
+> 
+> 
+> flex.clip <- function(spdf,
++                        spdf.clip,
++                        method = "arcpy",
++                        temp.path = "",
++                        python.search.path = "C:/Python27"
++ ){
++   if (class(spdf) != "SpatialPolygonsDataFrame") {
++     stop("spdf must be a valid Spatial Polygons Data Frame")
++   }
++   if (class(spdf.clip) != "SpatialPolygonsDataFrame") {
++     stop("spdf.clip) must be a valid Spatial Polygons Data Frame")
++   }
++   if (!(stringr::str_to_upper(method) %in% c("ARCPY"))) {
++     stop("method must be 'arcpy'.")
++   }
++   if (!file.exists(python.search.path)) {
++     stop("python.search.path must be a valid, pre-existing filepath.")
++   }
++   if (!file.exists(temp.path)) {
++     stop("temp.path must be a valid, pre-existing filepath.")
++   }
++ 
++   if (spdf@proj4string@projargs != spdf.clip@proj4string@projargs) {
++     spdf.clip <- sp::spTransform(spdf.clip, CRSobj = spdf@proj4string)
++   }
++            ## Create a temp directory
++            temp.directory <- paste0(temp.path, "/arcpy_temp")
++            dir.create(temp.directory, showWarnings = FALSE)
++ 
++            ## Write out the two current frames
++            rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape", driver = "ESRI Shapefile", overwrite_layer = TRUE)
++            rgdal::writeOGR(obj = spdf.clip, dsn = temp.directory, layer = "clipshape", driver = "ESRI Shapefile", overwrite_layer = TRUE)
++ 
++            ## Construct a quick python script to clip spdf by spdf.clip
++            arcpy.script <- c("import arcpy",
++                              "from arcpy import env",
++                              paste0("env.workspace = '", temp.directory, "'"),
++                              "in_features = 'inshape.shp'",
++                              "clip_features = 'clipshape.shp'",
++                              "out_feature_class = 'clipresults.shp'",
++                              "xy_tolerance = ''",
++                              "arcpy.Clip_analysis(in_features, clip_features, out_feature_class,xy_tolerance)"
++            )
++            ## Write the constructed script out
++            cat(arcpy.script, file = paste0(temp.directory, "/clip.py"), sep = "\n", append = F)
++ 
++            ## Find the local machine's copy of pythonw.exe in C:/Python27. There are no failsafes for if this isn't where to find it
++            python.path <- paste0(python.search.path, "/", list.files(path = python.search.path, pattern = "pythonw.exe", recursive = TRUE))
++            if (length(python.path) < 1) {
++              stop(paste0("Unable to find pythonw.exe in the folder or subfolders of ", python.search.path))
++            } else {
++              python.path <- python.path[1]
++            }
++ 
++            ## Execute the Python script
++            system(paste(python.path, stringr::str_replace_all(paste0(temp.directory, "/clip.py"), pattern = "/", replacement = "\\\\")))
++ 
++            ## Read in the results and rename the attributes because rgdal::writeOGR() truncated them
++            clip.results <- rgdal::readOGR(dsn = temp.directory, layer = "clipresults", stringsAsFactors = FALSE)
++            names(clip.results@data) <- names(spdf@data)
++ 
++            if (clip.results@proj4string@projargs != spdf@proj4string@projargs) {
++              output <- spTransform(clip.results, CRSobj = spdf@proj4string)
++            } else {
++              output <- clip.results
++            }
++            ## Remove the temp folder and files
++            if (grepl(method, pattern = "arcpy", ignore.case = TRUE)) {
++              system(paste("cmd /c rmdir", stringr::str_replace_all(temp.directory, pattern = "/", replacement = "\\\\"), "/s /q"))
++            }
++ 
++   return(output)
++ }
+> 
+> 
+> ##########################################################  Clip pts to polygon
+> 
+> ## flex.clip.pts() - clips spatial point data frames using ARCPY.  
+> flex.clip.pts <- function(spdf,
++                        spdf.clip,
++                        method = "arcpy",
++                        temp.path = "",
++                        python.search.path = "C:/Python27"
++ ){
++   if (class(spdf) != "SpatialPointsDataFrame") {    
++     stop("spdf must be a valid Spatial Points Data Frame")
++   }
++   if (class(spdf.clip) != "SpatialPolygonsDataFrame") {
++     stop("spdf.clip) must be a valid Spatial Polygons Data Frame")
++   }
++   if (!(stringr::str_to_upper(method) %in% c("ARCPY"))) {
++     stop("method must be 'arcpy'.")
++   }
++   if (!file.exists(python.search.path)) {
++     stop("python.search.path must be a valid, pre-existing filepath.")
++   }
++   if (!file.exists(temp.path)) {
++     stop("temp.path must be a valid, pre-existing filepath.")
++   }
++ 
++   if (spdf@proj4string@projargs != spdf.clip@proj4string@projargs) {
++     spdf.clip <- sp::spTransform(spdf.clip, CRSobj = spdf@proj4string)
++   }
++            ## Create a temp directory
++            temp.directory <- paste0(temp.path, "/arcpy_temp")
++            dir.create(temp.directory, showWarnings = FALSE)
++ 
++            ## Write out the two current frames
++            rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape", driver = "ESRI Shapefile", overwrite_layer = TRUE)
++            rgdal::writeOGR(obj = spdf.clip, dsn = temp.directory, layer = "clipshape", driver = "ESRI Shapefile", overwrite_layer = TRUE)
++ 
++            ## Construct a quick python script to clip spdf by spdf.clip
++            arcpy.script <- c("import arcpy",
++                              "from arcpy import env",
++                              paste0("env.workspace = '", temp.directory, "'"),
++                              "in_features = 'inshape.shp'",
++                              "clip_features = 'clipshape.shp'",
++                              "out_feature_class = 'clipresults.shp'",
++                              "xy_tolerance = ''",
++                              "arcpy.Clip_analysis(in_features, clip_features, out_feature_class,xy_tolerance)"
++            )
++            ## Write the constructed script out
++            cat(arcpy.script, file = paste0(temp.directory, "/clip.py"), sep = "\n", append = F)
++ 
++            ## Find the local machine's copy of pythonw.exe in C:/Python27. There are no failsafes for if this isn't where to find it
++            python.path <- paste0(python.search.path, "/", list.files(path = python.search.path, pattern = "pythonw.exe", recursive = TRUE))
++            if (length(python.path) < 1) {
++              stop(paste0("Unable to find pythonw.exe in the folder or subfolders of ", python.search.path))
++            } else {
++              python.path <- python.path[1]
++            }
++ 
++            ## Execute the Python script
++            system(paste(python.path, stringr::str_replace_all(paste0(temp.directory, "/clip.py"), pattern = "/", replacement = "\\\\")))
++ 
++            ## Read in the results and rename the attributes because rgdal::writeOGR() truncated them
++            clip.results <- rgdal::readOGR(dsn = temp.directory, layer = "clipresults", stringsAsFactors = FALSE)
++            names(clip.results@data) <- names(spdf@data)
++ 
++            if (clip.results@proj4string@projargs != spdf@proj4string@projargs) {
++              output <- spTransform(clip.results, CRSobj = spdf@proj4string)
++            } else {
++              output <- clip.results
++            }
++            ## Remove the temp folder and files
++            if (grepl(method, pattern = "arcpy", ignore.case = TRUE)) {
++              system(paste("cmd /c rmdir", stringr::str_replace_all(temp.directory, pattern = "/", replacement = "\\\\"), "/s /q"))
++            }
++ 
++   return(output)
++ }
+> ## 12/11/2017
+> ## PlotTracking - uses the PlotTracking spreadsheet to populate the SDD.  Used whenever the SDD has not been updated
+> ##                with the PlotTracking info.
+> 
+> ## Checks to make sure that the PLOTID in the PlotTracking spreadsheet occurs in TerraDat (if FINAL_DESIG==TS, then PLOTID must occur in TerraDat), and that  all PLOTIDs of the spreadsheet  occurs in the SDD.
+> ## If not, the errors are printed out (but processing continues). 
+> 
+> 
+> PlotTracking <- function(path.nam, ## Pathname to a spreadsheet
++                          sheetname,  		## THe name of the sheet in the excel file to ingest
++ 			 terra.spdf,  		## TerraDat
++                          workinglist, 		## the SDD sample pts
++                          DeleteOverDraw=T	## delete overdraw pts IFF they were not used
++ ) {
++ 
++ 
++ 	## Read the spreadsheet, standardize nomenclature, and store key attributes in retain
++ 
++                 s<-path.nam
++ 
++ 		## may need to mod data before further processing, so using xcelIN as an initial frame for the plot tracking data
++ 		xcelIN<-(read.xlsx(s,sheetName=sheetname,stringAsFactors=F))		## sheetname is typically PLOT TRACKING but not always!!
++ 		print(paste("No. of rows in plot tracking = ",nrow(xcelIN)))		## just a quick check
++ 		names(xcelIN) <- str_to_upper(names(xcelIN)) 
++ 	        xcel<-xcelIN
++ 
++ 
++ 		## Standardize data types and nomenclature
++ 		names(xcel)[names(xcel) == "PLOT.ID"] <- "PLOTID"
++ 
++ 
++ 		xcel$PLOTID<-as.character(xcel$PLOTID)		## deal with the data type 
++ 		xcel$PANEL<-as.character(xcel$PANEL)
++ 		xcel$PLOTSTATUS<-as.character(xcel$PLOT.STATUS)
++ 
++ 									
++ 		xcel$PANEL[xcel$PANEL=="OverSample"]<-"OverSample"		## This may need to be specified to each spreadsheet???
++ 		xcel$PLOTSTATUS[xcel$PLOTSTATUS %in% c("Sampled")]<-"TS"
++ 		xcel$PLOTSTATUS[xcel$PLOTSTATUS=="Rejected"]<-"IA"
++ 
++ 		retain<-data.frame(xcel[, c("PLOTID","PANEL","PLOTSTATUS","DATE.VISITED")])		## store plotid, panel, and plotstatus
++ 
++ 
++ 
++ ################  Locate the plotid in terradata then store the plot key, primary key, and date visited.  If plotid not in terradata, then
++ ##                the plot was not sampled (but there are subsequent checks to make sure the plotid's aren't misspelled) but
++ ##                frame data ID, PLKEY, PRKEY, and DV need to be set to NA. 
++ 
++    		store.df<-NULL
++ 
++    		for(i in 1:nrow(retain)) {
++       			a<-grep(terra.spdf$PLOTID,pattern=retain$PLOTID[i])
++         		if(length(a)>0) {
++             			hit<-0
++             			for(j in a) {
++             				if(terra.spdf$PLOTID[j]== retain$PLOTID[i]) {
++                    				temp.df<-data.frame(ID=terra.spdf$PLOTID[j],PLKEY=terra.spdf$PLOTKEY[j],PRKEY=terra.spdf$PRIMARYKEY[j],DV=terra.spdf$DATEVISITE[j])
++                    				hit<-1	## 
++             				}
++ 	    			}
++             			if(hit==0) {
++            				temp.df<-data.frame(ID=retain$PLOTID[i],PLKEY="NA",PRKEY="NA",DV=retain$DATE.VISITED[i])
++             			}
++         		}else {
++            				temp.df<-data.frame(ID=retain$PLOTID[i],PLKEY="NA",PRKEY="NA",DV=retain$DATE.VISITED[i])
++         		}
++         		store.df<-rbind(store.df,temp.df)
++    		}
++ 
++ 
++ ##################  We retained all the data so nrow of retain and store.df should be equal
++ 
++    		if(nrow(retain) != nrow(store.df)) {
++       			print(paste("nrow of retain and store.df !=  ",nrow(retain),nrow(store.df),sep=" "))
++ 
++    		}
++   		 store.df$ID<-as.character(store.df$ID)
++   		 store.df$PLKEY<-as.character(store.df$PLKEY)
++   		 store.df$PRKEY<-as.character(store.df$PRKEY)
++   		 store.df$DV<-as.character(store.df$DV)
++ 
++ 
++    		 retain<-cbind(retain,store.df)		## this will contain some dup info but that is for diagnostic purposes
++ 
++ 
++ 
++ 
++ 
++ ####################### Need to check to see if the plot tracking spread sheet indicates a sampled plot YET we can't find it in TerraDat.  Typically, this occurs
++ ##                      when plotID is coded incorrectly in the plot tracking sheet.
++ ## 			Specifically, if PLOTSTATUS==TS, then we should have a plotkey, terradata ID, and date visited.
++ 
++ 
++   		target<-c("Target Sampled","TS")
++ 
++    		for(i in 1:nrow(retain)) {
++       			if(retain$PLOTSTATUS[i] %in% target) {
++          			if(retain$PLKEY[i]=="NA") {
++             				print(paste("PlotID not in TerraDat ", retain$ID[i]))		## mismatch
++          			}
++       			}
++    		}
++ 
++ ###################### pick up the pts file of the corresponding SDD
++        	        pts<-workinglist
++ 
++ 
++ ####################### Compare plot tracking panel with SDD point draw. ?????
++ ## 			Use Over to compare
++    		t<-c("Year1")		## Year1	  ## probably need to make this more robust (e.g., what if we're dealing with Year 2 panels) OR needs to be passed to this function 
++    		a<-grep(retain$PANEL,pattern="Over")
++    		if(length(a)>0) {
++      			for(i in a) {
++          			b<-grep(pts$PLOT_NM,pattern=retain$PLOTID[i])
++          				if(length(b)>0) {
++             					for(j in b) {
++ 	       						if(pts$PLOT_NM[j]==retain$PLOTID[i]) {
++                                                                 ## Essentially, if we have a plot labeled as an OverDraw and the SDD indicates other than an OverDraw, then a mismatch.  Print out the plotid and the
++ 								##              SDD PT_Draw label and the PlotTracking Panel label.
++ 	          						if(pts$PT_DRAW[j] %in% t)print(paste("ID, SDD, PlTrck ",retain$PLOTID[i],pts$PT_DRAW[j],retain$PANEL[i]))
++ 	       						}
++             					}
++          				}
++      			}
++    		}   
++ 
++ 
++ 
++ ######################## We can have plots with no final designation that were either skipped or that were overdraws.  The former
++ ## 			should be noted as Unknowns, and the latter as NA and eventually eliminated from further analyses.   ????
++  			
++    		a<-grep(retain$PANEL,pattern="Year") 		
++    		if(length(a)>0) {
++      			for(i in a) {
++         			if(is.na(retain$PLOTSTATUS[i]))retain$PLOTSTATUS[i]<-"Unknown"
++      			}
++    		}
++ 
++ 
++ 
++ ####################### Loop thru retain, find PLOTID in the SDD, and set key attributes.  If PLOTID not in the SDD (hit==0), then print out the 'missing' PLOTID.
++       		for(i in 1:nrow(retain)) {
++          		a<-grep(pts$PLOT_NM,pattern=retain$PLOTID[i])
++          		hit<-0
++          		if(length(a)>0) {
++             			for(j in a) {
++                				if(pts$PLOT_NM[j]==retain$PLOTID[i]) {			## if retain contains other than NA, then set the attribute in pts.
++   						hit<-1							
++                   				if(retain$PLKEY[i]!="NA")pts$PLOT_KEY[j]<-retain$PLKEY[i]
++                   				if(retain$PRKEY[i]!="NA")pts$TERRA_TERRADAT_ID[j]<-retain$PRKEY[i]
++                   				pts$FINAL_DESIG[j]<-retain$PLOTSTATUS[i]
++                   				if(!is.na(retain$DV[i]))pts$DT_VST[j]<-retain$DV[i]
++                                          print(paste(pts$PLOT_NM[j],pts$PLOT_KEY[j],pts$TERRA_TERRADAT_ID[j],pts$FINAL_DESIG[j],pts$DT_VST[j],sep=" "))
++ 
++                				}
++             			}
++          		}
++          		if(hit==0) {
++             			print(paste("Couldn't find the plot in the SDD ",retain$PLOTID[i],sep=" "))
++          		} 
++  		}
++ 
++ 
++ ####################  If specified, delete overdraw pts that lack a final designation (i.e., not used).  This does not eliminate all NAs, just overdraw NAs..
++                 if(DeleteOverDraw) {
++                    pts@data$delete<-1
++ 		   a<-grep(pts$PANEL,pattern="Over")
++                    if(length(a)>0){
++ 			for(j in a) {
++ 				if(is.na(pts$FINAL_DESIG[j]))pts$delete[j]<-pts$FINAL_DESIG[j]		## This sets $delete to NA
++ 			}
++ 			pts<-pts[!is.na(pts@data$delete),]			## Get rid of all records with $delete == NA
++ 			pts$delete<-NULL
++ 		   }
++ 		}
++ 
++ 
++ #################### Check to see if FINAL_DESIG is TS, then there should be a date visited
++                 target<-c("Target Sampled","TS")
++                 a<-pts[pts$FINAL_DESIG %in% target ,]
++                 b<-a[!is.na(a$DT_VST) ,]
++                 print(paste("No. TS/DT_VST ",nrow(a),nrow(b),sep=" "))
++ 
++ 
++ 	## Declutter and save space
++         remove(store.df)
++         remove(retain)
++         remove(xcel)
++         remove(xcelIN)
++         remove(path.nam)
++ 
++ 
++ 	## Return the modified pts file(s) contained in the named list
++         return(pts)
++ 
++ } ## end of function
+> 
+> ##  SetHAFPlotID() - ensures that HAF scores have the correct plot_nm if this is what is being used. 
+> ##   SetHafPlotID(score is the Excel spreadsheet scores)
+> 
+> SetHAFPlotID<-function(score)
++ {
++ 
++     ## Given the tendency for HAF score PLOTIDs to not match SDD names, convert them to generally what SDDs use.
++     score$PLOTIDC<-0
++ 
++ ## Convert existing PlotID to syntax generally used in the SDDs.  This will not work if LMF keys are included as PlotID
++       for(i in 1:nrow(score)) {
++          a<-as.character(score$PLOTID[i])
++ 	 ## This will back-off from the RHS until a _ is found, then change it to a - and glue the filename back together using
++ 	 ## the -.  PlotIDs tend to differ between the field and SDDs by this - before a (plot) number.  e.g., LA_INTS_10 vs. LA_INTS-10.
++          b<-a
++ 	 size<-nchar(a)
++ 	 j<-size+1
++ 	 for(k in 1:size) {
++   		j<-j-1
++   		cc<-substr(a,j,j)
++   		dash<-grepl(cc,pattern="_")
++   		if(dash) {
++                         if(size-j <6) {		## Sometimes, the left-most "-" is correct, so this will prevent changing a correct "_" to a "-" 
++      				b<-paste(substr(a,1,j-1),"-",substr(a,j+1,nchar(a)),sep="")
++      				break
++                         }
++   		}
++ 	 }
++          score$PLOTIDC[i]<-b
++       }
++ 
++       return(score)
++ }
+> 
+> ## UpdatePtLocations() - Updates the coords of sdd PTS with TerrADat info IFF the 2 share the same primarykey, or plotkey, or plotnam.
+> 
+> ## UpdatePtLocations(terra.spdf,ptsfile)
+> 
+> UpdatePtLocations<-function(terra,pts)
++ {
++   
++    if(is.null(pts)) return(pts)		## Nothing to do since pts is NULL
++    if(nrow(pts)<=0) return(pts)		## Nothing to do since pts is empty
++ 
++     pts@data <- cbind(pts@data, pts@coords)
++     terra@data <- cbind(terra@data, terra@coords)
++ 
++ 
++     for(i in 1:nrow(pts)) {		
++         id1<-pts$TERRA_TERRADAT_ID[i]
++         id2<-pts$PLOT_KEY[i]
++         id3<-pts$PLOT_NM[i]
++ 
++         a<-NULL
++ 	b<-NULL
++ 	c<-NULL
++ 
++         if(!is.na(id1)) a<-grep(terra$PRIMARYKEY,pattern=id1)
++ 	if(!is.na(id2)) b<-grep(terra$PLOTKEY,pattern=id2)
++         if(!is.na(id3)) c<-grep(terra$PLOTID,pattern=id3)
++         
++ 	z<-0			## Update only if 1 of the following uiquely occurs in TerrADat
++         if(length(a)==1) {
++ 		z<-a
++ 	}else if(length(b)==1) {
++ 		z<-b
++ 	}else if(length(c)==1) {
++ 		z<-c
++ 	}
++ 
++ 	if(z>0) {		## update coords if a match in TerrADat
++ 		pts@coords[i,1]<-terra@coords[z,1]
++  		pts@coords[i,2]<-terra@coords[z,2]
++ 	}
++ 	
++     }	
++ 
++     pts@data$coords.x1<-NULL
++     pts@data$coords.x2<-NULL
++ 
++     return(pts)
++ }
+> 
+> ## Performs QA/QC checks on HAF points sent to the NOC to derive weights and weighted estimates of HAF categories.
+> ## Main (checkhaf.r)
+> ## WARNER HAF 12/11/2017
+> ##########################################################
+> ##########################################################
+> 
+> 
+> 
+> 
+>    projection = CRS("+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0")
+> ######################## set working directory
+>    setwd("c:/projects/fohaf/or/warner")
+> 
+> 
+> 
+> ###################################### ingest datasets
+>    terra.spdf <- readOGR(dsn="G:/aim/geo/terradat3",layer="terradat3",stringsAsFactors=FALSE)  ## Terradat file
+OGR data source with driver: ESRI Shapefile 
+Source: "G:/aim/geo/terradat3", layer: "terradat3"
+with 6425 features
+It has 57 fields
+Integer64 fields read as strings:  OBJECTID OBJECTID_1 
+>      terra.spdf <- spTransform(terra.spdf, projection)
+>    names(terra.spdf@data) <- str_to_upper(names(terra.spdf@data)) 
+> 
+>    sfasdd.spdf <- readOGR(dsn="V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb",layer="Terra_Sample_Points",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb", layer: "Terra_Sample_Points"
+with 369 features
+It has 27 fields
+>      sfasdd.spdf <- spTransform(sfasdd.spdf, projection)   
+>     names(sfasdd.spdf@data) <- str_to_upper(names(sfasdd.spdf@data)) 
+> 
+>    sfaframe.spdf <- readOGR(dsn="V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb",layer="Terra_Sample_Frame",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb", layer: "Terra_Sample_Frame"
+with 1 features
+It has 7 fields
+>      sfaframe.spdf <- spTransform(sfaframe.spdf, projection)   
+>     names(sfaframe.spdf@data) <- str_to_upper(names(sfaframe.spdf@data)) 
+> 
+>    sfastrata.spdf <- readOGR(dsn="V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb",layer="Terra_Strtfctn",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/State/SFA/Data/Sample Design/2016/ORWA_SFA_SampleDesignDatabase_2016_2020.gdb", layer: "Terra_Strtfctn"
+with 6 features
+It has 11 fields
+>      sfastrata.spdf<- spTransform(sfastrata.spdf, projection)  
+>    names(sfastrata.spdf@data) <- str_to_upper(names(sfastrata.spdf@data)) 
+> 
+>    lvsdd.spdf <- readOGR(dsn="V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb",layer="Terra_Sample_Points",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb", layer: "Terra_Sample_Points"
+with 377 features
+It has 24 fields
+>      lvsdd.spdf <- spTransform(lvsdd.spdf, projection)   
+>     names(lvsdd.spdf@data) <- str_to_upper(names(lvsdd.spdf@data)) 
+> 
+>    lvframe.spdf <- readOGR(dsn="V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb",layer="Terra_Sample_Frame",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb", layer: "Terra_Sample_Frame"
+with 3 features
+It has 6 fields
+>      lvframe.spdf <- spTransform(lvframe.spdf, projection)   
+>     names(lvframe.spdf@data) <- str_to_upper(names(lvframe.spdf@data)) 
+> 
+>    lvstrata.spdf <- readOGR(dsn="V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb",layer="Terra_Strtfctn",stringsAsFactors=FALSE)  ## PAC SDD
+OGR data source with driver: OpenFileGDB 
+Source: "V:/ORWA/Lakeview_DO/Data/SampleDesign/2016/OR_LakeviewDO_2016_2020_SDD.gdb", layer: "Terra_Strtfctn"
+with 8 features
+It has 11 fields
+>       lvstrata.spdf<- spTransform(lvstrata.spdf, projection)  
+>     names(lvstrata.spdf@data) <- str_to_upper(names(lvstrata.spdf@data)) 
+> 
+> 
+>    ####################### do the following if you need to update the SDDs with Plottracking info
+>       path.nam<-c("c:/projects/fohaf/or/warner/haf/LVDO_PLOTTRACKING_SLG.xlsx")
+>       sheetname<-c("Plot Tracking")
+>       lvsdd.spdf<-PlotTracking(path.nam,sheetname,terra.spdf,lvsdd.spdf,T)
+[1] "No. of rows in plot tracking =  67"
+[1] "PlotID not in TerraDat  LA_FO_OTH-1001"
+[1] "PlotID not in TerraDat  LA_FO_OTH-1002"
+[1] "PlotID not in TerraDat  LA_FO_OTH-1003"
+[1] "PlotID not in TerraDat  LA_FO_OTH-1017"
+[1] "PlotID not in TerraDat  LA_GRSG-1029"
+[1] "PlotID not in TerraDat  LA_GRSG-1030"
+[1] "PlotID not in TerraDat  LA_GRSG-1031"
+[1] "PlotID not in TerraDat  LA_GRSG-1032"
+[1] "PlotID not in TerraDat  LA_GRSG-1033"
+[1] "PlotID not in TerraDat  LA_GRSG-1034"
+[1] "PlotID not in TerraDat  LA_GRSG-1035"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1073"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1074"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1075"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1076"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1077"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1078"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1080"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1081"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1082"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1083"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1085"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1086"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1087"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1088"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1089"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1090"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1091"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1092"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1093"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1094"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1096"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1097"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1098"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1099"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1100"
+[1] "PlotID not in TerraDat  LA_UPS_SS-1185"
+[1] "PlotID not in TerraDat  LA_UPSH-1205"
+[1] "PlotID not in TerraDat  LA_UPSH-1206"
+[1] "PlotID not in TerraDat  LA_UPSH-1207"
+[1] "PlotID not in TerraDat  LA_UPSH-1209"
+[1] "PlotID not in TerraDat  LA_UPSH-1210"
+[1] "PlotID not in TerraDat  LA_UPSH-1211"
+[1] "PlotID not in TerraDat  LA_WE_RI-1245"
+[1] "PlotID not in TerraDat  LA_WE_RI-1247"
+[1] "PlotID not in TerraDat  LA_WE_RI-1257"
+[1] "LA_FO_OTH-1001 NA NA TS 20170727"
+[1] "LA_FO_OTH-1002 NA NA TS 20170717"
+[1] "LA_FO_OTH-1003 NA NA TS 20170715"
+[1] "LA_FO_OTH-1004 NA NA IA NA"
+[1] "LA_FO_OTH-1017 NA NA TS 20170726"
+[1] "LA_FO_OTH-1018 NA NA NA NA"
+[1] "LA_FO_OTH-1019 NA NA NA NA"
+[1] "LA_GRSG-1029 NA NA TS 20170717"
+[1] "LA_GRSG-1030 NA NA TS 20170730"
+[1] "LA_GRSG-1031 NA NA TS 20170603"
+[1] "LA_GRSG-1032 NA NA TS 20170717"
+[1] "LA_GRSG-1033 NA NA TS 20170712"
+[1] "LA_GRSG-1034 NA NA TS 20170701"
+[1] "LA_GRSG-1035 NA NA TS 20170522"
+[1] "LA_GRSG-1036 NA NA NA NA"
+[1] "LA_GRSG-1061 NA NA NA NA"
+[1] "LA_GRSG-1062 NA NA NA NA"
+[1] "LA_GRSG-1063 NA NA NA NA"
+[1] "LA_UPS_SS-1073 NA NA TS 20170702"
+[1] "LA_UPS_SS-1074 NA NA TS 20170701"
+[1] "LA_UPS_SS-1075 NA NA TS 20170619"
+[1] "LA_UPS_SS-1076 NA NA TS 20170716"
+[1] "LA_UPS_SS-1077 NA NA TS 20170727"
+[1] "LA_UPS_SS-1078 NA NA TS 20170602"
+[1] "LA_UPS_SS-1079 NA NA NA NA"
+[1] "LA_UPS_SS-1080 NA NA TS 20170714"
+[1] "LA_UPS_SS-1081 NA NA TS 20170728"
+[1] "LA_UPS_SS-1082 NA NA TS 20170619"
+[1] "LA_UPS_SS-1083 NA NA TS 20170727"
+[1] "LA_UPS_SS-1084 NA NA NA NA"
+[1] "LA_UPS_SS-1085 NA NA TS 20170703"
+[1] "LA_UPS_SS-1086 NA NA TS 20170618"
+[1] "LA_UPS_SS-1087 NA NA TS 20170702"
+[1] "LA_UPS_SS-1088 NA NA TS 20170521"
+[1] "LA_UPS_SS-1089 NA NA TS 20170701"
+[1] "LA_UPS_SS-1090 NA NA TS 20170703"
+[1] "LA_UPS_SS-1091 NA NA TS 20170605"
+[1] "LA_UPS_SS-1092 NA NA TS 20170714"
+[1] "LA_UPS_SS-1093 NA NA TS 20170809"
+[1] "LA_UPS_SS-1094 NA NA TS 20170629"
+[1] "LA_UPS_SS-1095 NA NA NA NA"
+[1] "LA_UPS_SS-1096 NA NA TS 20170713"
+[1] "LA_UPS_SS-1097 NA NA TS 20170702"
+[1] "LA_UPS_SS-1098 NA NA TS 20170619"
+[1] "LA_UPS_SS-1099 NA NA TS 20170731"
+[1] "LA_UPS_SS-1100 NA NA TS 20170520"
+[1] "LA_UPS_SS-1185 NA NA TS 20170728"
+[1] "LA_UPS_SS-1186 NA NA NA NA"
+[1] "LA_UPS_SS-1187 NA NA NA NA"
+[1] "LA_UPS_SS-1188 NA NA NA NA"
+[1] "LA_UPS_SS-1189 NA NA NA NA"
+[1] "LA_UPSH-1205 NA NA TS 20170715"
+[1] "LA_UPSH-1206 NA NA TS 20170630"
+[1] "LA_UPSH-1207 NA NA TS 20170522"
+[1] "LA_UPSH-1208 NA NA NA NA"
+[1] "LA_UPSH-1209 NA NA TS 20170717"
+[1] "LA_UPSH-1210 NA NA TS 20170603"
+[1] "LA_UPSH-1211 NA NA TS 20170701"
+[1] "LA_UPSH-1233 NA NA NA NA"
+[1] "LA_UPSH-1234 NA NA NA NA"
+[1] "LA_UPSH-1235 NA NA NA NA"
+[1] "LA_WE_RI-1245 NA NA TS 20170618"
+[1] "LA_WE_RI-1246 NA NA IA NA"
+[1] "LA_WE_RI-1247 NA NA TS 20170716"
+[1] "LA_WE_RI-1257 NA NA TS 20170810"
+[1] "LA_WE_RI-1258 NA NA NA NA"
+[1] "LA_WE_RI-1259 NA NA NA NA"
+[1] "No. TS/DT_VST  169 169"
+> 
+>       path.nam<-c("c:/projects/fohaf/or/warner/haf/SFA_PLOTTRACKING_SLG.xlsx")
+>       sfasdd.spdf<-PlotTracking(path.nam,sheetname,terra.spdf,sfasdd.spdf,T)
+[1] "No. of rows in plot tracking =  216"
+[1] "PlotID not in TerraDat  SFA_FO_OTH-007"
+[1] "PlotID not in TerraDat  SFA_FO_OTH-009"
+[1] "PlotID not in TerraDat  SFA_FO_OTH-011"
+[1] "PlotID not in TerraDat  SFA_FO_OTH-012"
+[1] "PlotID not in TerraDat  SFA_GRSG-108"
+[1] "PlotID not in TerraDat  SFA_GRSG-109"
+[1] "PlotID not in TerraDat  SFA_GRSG-110"
+[1] "PlotID not in TerraDat  SFA_GRSG-111"
+[1] "PlotID not in TerraDat  SFA_GRSG-112"
+[1] "PlotID not in TerraDat  SFA_GRSG-114"
+[1] "PlotID not in TerraDat  SFA_GRSG-115"
+[1] "PlotID not in TerraDat  SFA_GRSG-116"
+[1] "PlotID not in TerraDat  SFA_GRSG-117"
+[1] "PlotID not in TerraDat  SFA_GRSG-118"
+[1] "PlotID not in TerraDat  SFA_GRSG-119"
+[1] "PlotID not in TerraDat  SFA_GRSG-120"
+[1] "PlotID not in TerraDat  SFA_GRSG-121"
+[1] "PlotID not in TerraDat  SFA_GRSG-122"
+[1] "PlotID not in TerraDat  SFA_GRSG-123"
+[1] "PlotID not in TerraDat  SFA_GRSG-124"
+[1] "PlotID not in TerraDat  SFA_GRSG-125"
+[1] "PlotID not in TerraDat  SFA_GRSG-126"
+[1] "PlotID not in TerraDat  SFA_GRSG-127"
+[1] "PlotID not in TerraDat  SFA_GRSG-128"
+[1] "PlotID not in TerraDat  SFA_GRSG-129"
+[1] "PlotID not in TerraDat  SFA_GRSG-130"
+[1] "PlotID not in TerraDat  SFA_GRSG-131"
+[1] "PlotID not in TerraDat  SFA_GRSG-132"
+[1] "PlotID not in TerraDat  SFA_GRSG-133"
+[1] "PlotID not in TerraDat  SFA_GRSG-134"
+[1] "PlotID not in TerraDat  SFA_GRSG-135"
+[1] "PlotID not in TerraDat  SFA_GRSG-136"
+[1] "PlotID not in TerraDat  SFA_GRSG-137"
+[1] "PlotID not in TerraDat  SFA_GRSG-138"
+[1] "PlotID not in TerraDat  SFA_GRSG-139"
+[1] "PlotID not in TerraDat  SFA_GRSG-140"
+[1] "PlotID not in TerraDat  SFA_GRSG-141"
+[1] "PlotID not in TerraDat  SFA_GRSG-142"
+[1] "PlotID not in TerraDat  SFA_GRSG-143"
+[1] "PlotID not in TerraDat  SFA_GRSG-144"
+[1] "PlotID not in TerraDat  SFA_GRSG-145"
+[1] "PlotID not in TerraDat  SFA_GRSG-146"
+[1] "PlotID not in TerraDat  SFA_GRSG-147"
+[1] "PlotID not in TerraDat  SFA_GRSG-148"
+[1] "PlotID not in TerraDat  SFA_GRSG-149"
+[1] "PlotID not in TerraDat  SFA_GRSG-150"
+[1] "PlotID not in TerraDat  SFA_GRSG-151"
+[1] "PlotID not in TerraDat  SFA_GRSG-153"
+[1] "PlotID not in TerraDat  SFA_GRSG-154"
+[1] "PlotID not in TerraDat  SFA_GRSG-155"
+[1] "PlotID not in TerraDat  SFA_GRSG-156"
+[1] "PlotID not in TerraDat  SFA_GRSG-157"
+[1] "PlotID not in TerraDat  SFA_GRSG-158"
+[1] "PlotID not in TerraDat  SFA_GRSG-160"
+[1] "PlotID not in TerraDat  SFA_GRSG-161"
+[1] "PlotID not in TerraDat  SFA_GRSG-162"
+[1] "PlotID not in TerraDat  SFA_GRSG-163"
+[1] "PlotID not in TerraDat  SFA_GRSG-165"
+[1] "PlotID not in TerraDat  SFA_GRSG-358"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-425"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-426"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-427"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-428"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-429"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-430"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-431"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-432"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-433"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-434"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-436"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-437"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-438"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-439"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-440"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-441"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-442"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-443"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-444"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-445"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-446"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-447"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-448"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-449"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-450"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-451"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-452"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-453"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-454"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-455"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-456"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-457"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-458"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-459"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-460"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-461"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-462"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-463"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-464"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-465"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-466"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-469"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-470"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-473"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-474"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-478"
+[1] "PlotID not in TerraDat  SFA_UPS_SS-641"
+[1] "PlotID not in TerraDat  SFA_UPSH-681"
+[1] "PlotID not in TerraDat  SFA_UPSH-682"
+[1] "PlotID not in TerraDat  SFA_UPSH-683"
+[1] "PlotID not in TerraDat  SFA_UPSH-684"
+[1] "PlotID not in TerraDat  SFA_UPSH-686"
+[1] "PlotID not in TerraDat  SFA_UPSH-687"
+[1] "PlotID not in TerraDat  SFA_UPSH-688"
+[1] "PlotID not in TerraDat  SFA_UPSH-689"
+[1] "PlotID not in TerraDat  SFA_UPSH-690"
+[1] "PlotID not in TerraDat  SFA_UPSH-691"
+[1] "PlotID not in TerraDat  SFA_UPSH-692"
+[1] "PlotID not in TerraDat  SFA_UPSH-693"
+[1] "PlotID not in TerraDat  SFA_UPSH-694"
+[1] "PlotID not in TerraDat  SFA_UPSH-696"
+[1] "PlotID not in TerraDat  SFA_UPSH-697"
+[1] "PlotID not in TerraDat  SFA_UPSH-698"
+[1] "PlotID not in TerraDat  SFA_UPSH-699"
+[1] "PlotID not in TerraDat  SFA_UPSH-700"
+[1] "PlotID not in TerraDat  SFA_UPSH-701"
+[1] "PlotID not in TerraDat  SFA_UPSH-702"
+[1] "PlotID not in TerraDat  SFA_UPSH-703"
+[1] "PlotID not in TerraDat  SFA_UPSH-704"
+[1] "PlotID not in TerraDat  SFA_UPSH-705"
+[1] "PlotID not in TerraDat  SFA_WE_RI-802"
+[1] "PlotID not in TerraDat  SFA_WE_RI-803"
+[1] "SFA_FO_OTH-007 NA NA TS 20170713"
+[1] "SFA_FO_OTH-008 NA NA IA NA"
+[1] "SFA_FO_OTH-009 NA NA TS 20170509"
+[1] "SFA_FO_OTH-010 NA NA IA NA"
+[1] "SFA_FO_OTH-011 NA NA TS NA"
+[1] "SFA_FO_OTH-012 NA NA TS 20170617"
+[1] "SFA_FO_OTH-033 NA NA NA NA"
+[1] "SFA_FO_OTH-035 NA NA NA NA"
+[1] "SFA_FO_OTH-036 NA NA NA NA"
+[1] "SFA_FO_OTH-037 NA NA NA NA"
+[1] "SFA_FO_OTH-038 NA NA NA NA"
+[1] "SFA_FO_OTH-039 NA NA NA NA"
+[1] "SFA_FO_OTH-040 NA NA NA NA"
+[1] "SFA_FO_OTH-041 NA NA NA NA"
+[1] "SFA_FO_OTH-042 NA NA NA NA"
+[1] "SFA_FO_OTH-043 NA NA NA NA"
+[1] "SFA_FO_OTH-044 NA NA NA NA"
+[1] "SFA_FO_OTH-045 NA NA NA NA"
+[1] "SFA_GRSG-108 NA NA TS 20170605"
+[1] "SFA_GRSG-109 NA NA TS 20170615"
+[1] "SFA_GRSG-110 NA NA TS 20170620"
+[1] "SFA_GRSG-111 NA NA TS 20170728"
+[1] "SFA_GRSG-112 NA NA TS 20170812"
+[1] "SFA_GRSG-113 NA NA IA NA"
+[1] "SFA_GRSG-114 NA NA TS 20170630"
+[1] "SFA_GRSG-115 NA NA TS 20170715"
+[1] "SFA_GRSG-116 NA NA TS 20170617"
+[1] "SFA_GRSG-117 NA NA TS NA"
+[1] "SFA_GRSG-118 NA NA TS 20170701"
+[1] "SFA_GRSG-119 NA NA TS 20170729"
+[1] "SFA_GRSG-120 NA NA TS 20170714"
+[1] "SFA_GRSG-121 NA NA TS 20170603"
+[1] "SFA_GRSG-122 NA NA TS 20170727"
+[1] "SFA_GRSG-123 NA NA TS 20170813"
+[1] "SFA_GRSG-124 NA NA TS 20170717"
+[1] "SFA_GRSG-125 NA NA TS 20170604"
+[1] "SFA_GRSG-126 NA NA TS 20170618"
+[1] "SFA_GRSG-127 NA NA TS 20170812"
+[1] "SFA_GRSG-128 NA NA TS 20170617"
+[1] "SFA_GRSG-129 NA NA TS 20170813"
+[1] "SFA_GRSG-130 NA NA TS 20170617"
+[1] "SFA_GRSG-131 NA NA TS 20170716"
+[1] "SFA_GRSG-132 NA NA TS 20170813"
+[1] "SFA_GRSG-133 NA NA TS NA"
+[1] "SFA_GRSG-134 NA NA TS 20170701"
+[1] "SFA_GRSG-135 NA NA TS 20170813"
+[1] "SFA_GRSG-136 NA NA TS 20170815"
+[1] "SFA_GRSG-137 NA NA TS NA"
+[1] "SFA_GRSG-138 NA NA TS 20170728"
+[1] "SFA_GRSG-139 NA NA TS 20170825"
+[1] "SFA_GRSG-140 NA NA TS 20170814"
+[1] "SFA_GRSG-141 NA NA TS 20170521"
+[1] "SFA_GRSG-142 NA NA TS 20170605"
+[1] "SFA_GRSG-143 NA NA TS 20170826"
+[1] "SFA_GRSG-144 NA NA TS NA"
+[1] "SFA_GRSG-145 NA NA TS NA"
+[1] "SFA_GRSG-146 NA NA TS 20170629"
+[1] "SFA_GRSG-147 NA NA TS 20170827"
+[1] "SFA_GRSG-148 NA NA TS 20170618"
+[1] "SFA_GRSG-149 NA NA TS NA"
+[1] "SFA_GRSG-150 NA NA TS 20170824"
+[1] "SFA_GRSG-151 NA NA TS 20170824"
+[1] "SFA_GRSG-152 NA NA IA NA"
+[1] "SFA_GRSG-153 NA NA TS NA"
+[1] "SFA_GRSG-154 NA NA TS 20170826"
+[1] "SFA_GRSG-155 NA NA TS NA"
+[1] "SFA_GRSG-156 NA NA TS NA"
+[1] "SFA_GRSG-157 NA NA TS 20170503"
+[1] "SFA_GRSG-158 NA NA TS 20170630"
+[1] "SFA_GRSG-159 NA NA IA NA"
+[1] "SFA_GRSG-160 NA NA TS NA"
+[1] "SFA_GRSG-161 NA NA TS NA"
+[1] "SFA_GRSG-162 NA NA TS 20170825"
+[1] "SFA_GRSG-163 NA NA TS NA"
+[1] "SFA_GRSG-164 NA NA IA NA"
+[1] "SFA_GRSG-165 NA NA TS NA"
+[1] "SFA_GRSG-166 NA NA NA NA"
+[1] "SFA_GRSG-167 NA NA NA NA"
+[1] "SFA_GRSG-168 NA NA NA NA"
+[1] "SFA_GRSG-169 NA NA IA NA"
+[1] "SFA_GRSG-356 NA NA NA NA"
+[1] "SFA_GRSG-357 NA NA NA NA"
+[1] "SFA_GRSG-358 NA NA TS 20170618"
+[1] "SFA_GRSG-359 NA NA NA NA"
+[1] "SFA_GRSG-360 NA NA NA NA"
+[1] "SFA_GRSG-361 NA NA NA NA"
+[1] "SFA_GRSG-362 NA NA NA NA"
+[1] "SFA_GRSG-363 NA NA NA NA"
+[1] "SFA_GRSG-364 NA NA NA NA"
+[1] "SFA_GRSG-365 NA NA NA NA"
+[1] "SFA_GRSG-366 NA NA NA NA"
+[1] "SFA_GRSG-367 NA NA NA NA"
+[1] "SFA_GRSG-368 NA NA NA NA"
+[1] "SFA_GRSG-369 NA NA NA NA"
+[1] "SFA_GRSG-370 NA NA NA NA"
+[1] "SFA_UPS_SS-425 NA NA TS NA"
+[1] "SFA_UPS_SS-426 NA NA TS 20170602"
+[1] "SFA_UPS_SS-427 NA NA TS 20170811"
+[1] "SFA_UPS_SS-428 NA NA TS 20170510"
+[1] "SFA_UPS_SS-429 NA NA TS 20170811"
+[1] "SFA_UPS_SS-430 NA NA TS 20170520"
+[1] "SFA_UPS_SS-431 NA NA TS 20170602"
+[1] "SFA_UPS_SS-432 NA NA TS 20170604"
+[1] "SFA_UPS_SS-433 NA NA TS 20170517"
+[1] "SFA_UPS_SS-434 NA NA TS 20170620"
+[1] "SFA_UPS_SS-435 NA NA IA NA"
+[1] "SFA_UPS_SS-436 NA NA TS 20170603"
+[1] "SFA_UPS_SS-437 NA NA TS 20170519"
+[1] "SFA_UPS_SS-438 NA NA TS 20170519"
+[1] "SFA_UPS_SS-439 NA NA TS 20170811"
+[1] "SFA_UPS_SS-440 NA NA TS 20170524"
+[1] "SFA_UPS_SS-441 NA NA TS NA"
+[1] "SFA_UPS_SS-442 NA NA TS NA"
+[1] "SFA_UPS_SS-443 NA NA TS 20170814"
+[1] "SFA_UPS_SS-444 NA NA TS 20170523"
+[1] "SFA_UPS_SS-445 NA NA TS NA"
+[1] "SFA_UPS_SS-446 NA NA TS 20170508"
+[1] "SFA_UPS_SS-447 NA NA TS NA"
+[1] "SFA_UPS_SS-448 NA NA TS 20170522"
+[1] "SFA_UPS_SS-449 NA NA TS 20170614"
+[1] "SFA_UPS_SS-450 NA NA TS NA"
+[1] "SFA_UPS_SS-451 NA NA TS 20170701"
+[1] "SFA_UPS_SS-452 NA NA TS NA"
+[1] "SFA_UPS_SS-453 NA NA TS NA"
+[1] "SFA_UPS_SS-454 NA NA TS 20170614"
+[1] "SFA_UPS_SS-455 NA NA TS 20170607"
+[1] "SFA_UPS_SS-456 NA NA TS 20170619"
+[1] "SFA_UPS_SS-457 NA NA TS NA"
+[1] "SFA_UPS_SS-458 NA NA TS NA"
+[1] "SFA_UPS_SS-459 NA NA TS 20170824"
+[1] "SFA_UPS_SS-460 NA NA TS 20170606"
+[1] "SFA_UPS_SS-461 NA NA TS NA"
+[1] "SFA_UPS_SS-462 NA NA TS 20170509"
+[1] "SFA_UPS_SS-463 NA NA TS NA"
+[1] "SFA_UPS_SS-464 NA NA TS NA"
+[1] "SFA_UPS_SS-465 NA NA TS 20170629"
+[1] "SFA_UPS_SS-466 NA NA TS 20170702"
+[1] "SFA_UPS_SS-467 NA NA NA NA"
+[1] "SFA_UPS_SS-468 NA NA NA NA"
+[1] "SFA_UPS_SS-469 NA NA TS 20170518"
+[1] "SFA_UPS_SS-470 NA NA TS 20170605"
+[1] "SFA_UPS_SS-471 NA NA NA NA"
+[1] "SFA_UPS_SS-472 NA NA NA NA"
+[1] "SFA_UPS_SS-473 NA NA TS NA"
+[1] "SFA_UPS_SS-474 NA NA TS NA"
+[1] "SFA_UPS_SS-475 NA NA NA NA"
+[1] "SFA_UPS_SS-476 NA NA NA NA"
+[1] "SFA_UPS_SS-477 NA NA NA NA"
+[1] "SFA_UPS_SS-478 NA NA TS 20170504"
+[1] "SFA_UPS_SS-641 NA NA TS 20170519"
+[1] "SFA_UPS_SS-642 NA NA NA NA"
+[1] "SFA_UPS_SS-643 NA NA NA NA"
+[1] "SFA_UPS_SS-644 NA NA NA NA"
+[1] "SFA_UPS_SS-645 NA NA NA NA"
+[1] "SFA_UPS_SS-646 NA NA NA NA"
+[1] "SFA_UPS_SS-648 NA NA NA NA"
+[1] "SFA_UPS_SS-649 NA NA NA NA"
+[1] "SFA_UPS_SS-650 NA NA NA NA"
+[1] "SFA_UPS_SS-651 NA NA NA NA"
+[1] "SFA_UPS_SS-652 NA NA NA NA"
+[1] "SFA_UPSH-681 NA NA TS NA"
+[1] "SFA_UPSH-682 NA NA TS 20170616"
+[1] "SFA_UPSH-683 NA NA TS 20170604"
+[1] "SFA_UPSH-684 NA NA TS 20170510"
+[1] "SFA_UPSH-685 NA NA IA NA"
+[1] "SFA_UPSH-686 NA NA TS 20170509"
+[1] "SFA_UPSH-687 NA NA TS 20170518"
+[1] "SFA_UPSH-688 NA NA TS 20170604"
+[1] "SFA_UPSH-689 NA NA TS 20170616"
+[1] "SFA_UPSH-690 NA NA TS 20170812"
+[1] "SFA_UPSH-691 NA NA TS 20170810"
+[1] "SFA_UPSH-692 NA NA TS 20170602"
+[1] "SFA_UPSH-693 NA NA TS 20170616"
+[1] "SFA_UPSH-694 NA NA TS 20170619"
+[1] "SFA_UPSH-695 NA NA IA NA"
+[1] "SFA_UPSH-696 NA NA TS 20170615"
+[1] "SFA_UPSH-697 NA NA TS NA"
+[1] "SFA_UPSH-698 NA NA TS NA"
+[1] "SFA_UPSH-699 NA NA TS NA"
+[1] "SFA_UPSH-700 NA NA TS 20170508"
+[1] "SFA_UPSH-701 NA NA TS 20170825"
+[1] "SFA_UPSH-702 NA NA TS NA"
+[1] "SFA_UPSH-703 NA NA TS 20170619"
+[1] "SFA_UPSH-704 NA NA TS 20170602"
+[1] "SFA_UPSH-705 NA NA TS 20170617"
+[1] "SFA_UPSH-781 NA NA NA NA"
+[1] "SFA_UPSH-782 NA NA NA NA"
+[1] "SFA_UPSH-783 NA NA NA NA"
+[1] "SFA_UPSH-784 NA NA NA NA"
+[1] "SFA_UPSH-785 NA NA NA NA"
+[1] "SFA_UPSH-786 NA NA NA NA"
+[1] "SFA_UPSH-787 NA NA NA NA"
+[1] "SFA_UPSH-788 NA NA NA NA"
+[1] "SFA_UPSH-789 NA NA NA NA"
+[1] "SFA_UPSH-790 NA NA NA NA"
+[1] "SFA_UPSH-791 NA NA NA NA"
+[1] "SFA_UPSH-792 NA NA NA NA"
+[1] "SFA_UPSH-793 NA NA NA NA"
+[1] "SFA_UPSH-794 NA NA NA NA"
+[1] "SFA_WE_RI-800 NA NA IA NA"
+[1] "SFA_WE_RI-801 NA NA IA NA"
+[1] "SFA_WE_RI-802 NA NA TS 20170510"
+[1] "SFA_WE_RI-803 NA NA TS 20170616"
+[1] "SFA_WE_RI-816 NA NA NA NA"
+[1] "SFA_WE_RI-817 NA NA NA NA"
+[1] "SFA_WE_RI-819 NA NA NA NA"
+[1] "SFA_WE_RI-820 NA NA NA NA"
+[1] "SFA_WE_RI-821 NA NA NA NA"
+[1] "SFA_WE_RI-822 NA NA NA NA"
+[1] "SFA_WE_RI-823 NA NA NA NA"
+[1] "SFA_WE_RI-824 NA NA NA NA"
+[1] "SFA_WE_RI-825 NA NA NA NA"
+[1] "SFA_WE_RI-826 NA NA NA NA"
+[1] "SFA_WE_RI-828 NA NA NA NA"
+[1] "SFA_WE_RI-829 NA NA NA NA"
+[1] "SFA_WE_RI-830 NA NA NA NA"
+[1] "No. TS/DT_VST  202 168"
+> 
+> 
+> ########################### Update the location of pts in the SDD using TerrADat coords (IFF the pt occurs in TerrADat)
+>     sfasdd.spdf<-UpdatePtLocations(terra.spdf,sfasdd.spdf)		  ## Updates the location of pts
+>     lvsdd.spdf<-UpdatePtLocations(terra.spdf,lvsdd.spdf)
+> 
+> 
+> ########################### 
+>    ## SPRING HABITAT
+>    spring.spdf <- readOGR(dsn="C:/projects/fohaf/or/warner/haf",layer="springSMA",stringsAsFactors=FALSE)  
+OGR data source with driver: ESRI Shapefile 
+Source: "C:/projects/fohaf/or/warner/haf", layer: "springSMA"
+with 4 features
+It has 6 fields
+Integer64 fields read as strings:  OBJECTID_1 OBJECTID Id 
+>      spring.spdf <- spTransform(spring.spdf, projection)   
+>    names(spring.spdf@data) <- str_to_upper(names(spring.spdf@data)) 
+> 
+>    ## SUMMER
+>    summer.spdf <- readOGR(dsn="C:/projects/fohaf/or/warner/haf",layer="summerSMA",stringsAsFactors=FALSE)  
+OGR data source with driver: ESRI Shapefile 
+Source: "C:/projects/fohaf/or/warner/haf", layer: "summerSMA"
+with 9 features
+It has 6 fields
+Integer64 fields read as strings:  OBJECTID_1 OBJECTID Id 
+>      summer.spdf <- spTransform(summer.spdf, projection)   
+>    names(summer.spdf@data) <- str_to_upper(names(summer.spdf@data))
+> 
+>    ## WINTER
+>    winter.spdf <- readOGR(dsn="C:/projects/fohaf/or/warner/haf",layer="winterSMA",stringsAsFactors=FALSE)  
+OGR data source with driver: ESRI Shapefile 
+Source: "C:/projects/fohaf/or/warner/haf", layer: "winterSMA"
+with 5 features
+It has 6 fields
+Integer64 fields read as strings:  OBJECTID_1 OBJECTID Id 
+>      winter.spdf <- spTransform(winter.spdf, projection)   
+>    names(winter.spdf@data) <- str_to_upper(names(winter.spdf@data))
+> 
+>    index<-0
+>    for(index in 1:4) {
++ 
++    print(paste("INDEX= ",index,sep=" "))
++    ##  Set clip.spdf to HABITAT spdf
++    if(index==1)clip.spdf<-spring.spdf
++    if(index==2)clip.spdf<-summer.spdf
++    if(index==3)clip.spdf<-winter.spdf
++    if(index==4)clip.spdf<-summer.spdf		## Grass_forb stuff - summer habitat
++ 
++ 
++ 
++ ################################# I. DO the plotkeys in the spreadsheets match plotkeys in TerrADat, SDDs, or LMF.
++    if(index==1)xcel<-(read.xlsx("C:/projects/fohaf/or/warner/haf/OR_2017_Warners_NOC_HAF_Analysis_Request_20171206_v2.xlsx",sheetName="S-3 Nesting Early Brood Rearing",stringAsFactors=F))
++    if(index==2)xcel<-(read.xlsx("C:/projects/fohaf/or/warner/haf/OR_2017_Warners_NOC_HAF_Analysis_Request_20171206_v2.xlsx",sheetName="S-4 Upland Summer Late Brood",stringAsFactors=F))
++    if(index==3)xcel<-(read.xlsx("C:/projects/fohaf/or/warner/haf/OR_2017_Warners_NOC_HAF_Analysis_Request_20171206_v2.xlsx",sheetName="S-6 Winter",stringAsFactors=F))
++    if(index==4)xcel<-(read.xlsx("C:/projects/fohaf/or/warner/haf/OR_2017_Warners_NOC_HAF_Analysis_Request_20171206_v2.xlsx",sheetName="S-4 Combined Grass_Forbs",stringAsFactors=F))
++ 
++    xcel<-xcel[!is.na(xcel$AIM.or.LMF) ,]		## sometimes have to do this to get rid of junk following actual data rows!
++ 
++    temp.df<-data.frame(DATA=xcel$AIM.or.LMF,DESIGN=xcel$Sample.Design,PLOTID=xcel$Plot.Identifier,DATE=xcel$Sample.Date)
++    temp.df$PLOTKEY<-NA
++ 
++    ######### Do the following if you need to convert plot name to proper name, and to pick up plotkey 
++    temp.df<-SetHAFPlotID(temp.df)
++ 
++ 
++   ##########  now we can continue.  Look at plotkey
++    junk<-NULL
++    a<-temp.df
++    if(nrow(a)>0) {
++       for(j in 1:nrow(a)) {
++           tr<-0
++           b<-grep(terra.spdf$PLOTKEY,pattern=a$PLOTID[j])
++           if(length(b)==1) tr<-1
++           b<-grep(sfasdd.spdf$PLOT_KEY,pattern=a$PLOTID[j])
++           if(length(b)==1) tr<-1
++           b<-grep(lvsdd.spdf$PLOT_KEY,pattern=a$PLOTID[j])
++           if(length(b)==1) tr<-1
++ 
++ 	##  IF tr==0, then no match
++           if(tr==0)junk<-rbind(junk,a[j ,])
++       }
++    }
++    if(!is.null(junk)) {
++         print("No matches to spreadsheet pts based on plotkey")
++         print(junk)
++    }else {
++      print("All spreadsheet plotkeys match SDDs & TerrADat")
++    }
++ 
++ 
++    ################### Look at plot names
++    junk<-NULL
++    a<-temp.df
++    if(nrow(a)>0) {
++       for(j in 1:nrow(a)) {
++           tr<-0
++           b<-grep(terra.spdf$PLOTID,pattern=a$PLOTIDC[j])
++           if(length(b)==1) tr<-1
++           b<-grep(sfasdd.spdf$PLOT_NM,pattern=a$PLOTIDC[j])
++           if(length(b)==1) tr<-1
++           b<-grep(lvsdd.spdf$PLOT_NM,pattern=a$PLOTIDC[j])
++           if(length(b)==1) tr<-1
++ 
++ 	##  IF tr==0, then no match
++           if(tr==0)junk<-rbind(junk,a[j ,])
++       }
++    }
++    if(!is.null(junk)) {
++         print("No matches to spreadsheet pts based on plot name")
++         print(junk)
++    }else {
++        print("All spreadsheet plot names match SDDs and TerrADat")
++    }
++ 
++ 
++ 
++ ################################# II. Clip SDD frames to SG habitat - currently not used.
++   # newpacF<-flex.clip(pacframe.spdf,clip.spdf,method = "arcpy",temp.path = getwd(),
++   #                     python.search.path = "C:/Python27")
++ 
++  #  newowyF<-flex.clip(owyframe.spdf,clip.spdf,method = "arcpy",temp.path = getwd(),
++    #                    python.search.path = "C:/Python27")
++ 
++ 
++ ############################### III.  Clip SDD pts to SG habitat.
++     newsfaS<-flex.clip.pts(sfasdd.spdf,clip.spdf,method = "arcpy",temp.path = getwd(),
++                            python.search.path = "C:/Python27")
++     newlvS<-flex.clip.pts(lvsdd.spdf,clip.spdf,method = "arcpy",temp.path = getwd(),
++                            python.search.path = "C:/Python27")
++ 
++     ## Record the clipped pts for future reference
++     cpts.df<-data.frame(NAME=newsfaS$PLOT_NM,FRAME=newsfaS$TERRA_SAMPLE_FRAME_ID,PANEL=newsfaS$PANEL,PKEY=newsfaS$PLOT_KEY,FD=newsfaS$FINAL_DESIG,DATE=newsfaS$DT_VST)
++     print("CLIPPED SFA POINTS")
++     print(cpts.df)
++     cpts.df<-data.frame(NAME=newlvS$PLOT_NM,FRAME=newlvS$TERRA_SAMPLE_FRAME_ID,PANEL=newlvS$PANEL,PKEY=newlvS$PLOT_KEY,FD=newlvS$FINAL_DESIG,DATE=newlvS$DT_VST)
++     print("CLIPPED LV POINTS")
++     print(cpts.df)
++     cpts.df<-NULL
++ 
++ ############################## IV.  Pull out target sampled pts - Check for year??
++      target<-c("Target Sampled","TS","TARGET SAMPLED")
++ 
++      newsfaST<-newsfaS[newsfaS$FINAL_DESIG %in% target,]
++      newlvST<-newlvS[newlvS$FINAL_DESIG %in% target,]
++ 
++ 
++ ############################## V.  Compare the plot IDs in the spreadsheet to make sure they are within SG habitat & within the sample frames & LMF.
++ ##  Also, record tr >0 for pts that are used.  If not used for this HABITAT, tr=0.
++ ##  This comparison may be repeated if ONLY plot names are being used (
++ 
++    ## Init
++    newsfaST$TR<-0
++    newlvST$TR<-0
++  
++ 
++    junk<-NULL
++    a<-temp.df				## The last EXCEL spreadsheet ingested
++    if(nrow(a)>0) {
++       for(j in 1:nrow(a)) {
++           tr<-0
++           b<-grep(newsfaST$PLOT_KEY,pattern=a$PLOTID[j])
++           if(length(b)==1) {
++              tr<-1
++              newsfaST$TR[b]<-tr		## pts used for this season
++           }
++           b<-grep(newlvST$PLOT_KEY,pattern=a$PLOTID[j])
++           if(length(b)==1){
++               tr<-2
++               newlvST$TR[b]<-tr	## Pts used for this season
++           }   
++ 
++ 	##  IF tr==0 then no match,
++           if(tr==0)junk<-rbind(junk,a[j ,])
++       }
++    }
++    if(!is.null(junk)) {
++         print("No matches to spreadsheet pts based on clipped plot key")
++         print(junk)
++    }else {
++        print("All spreadsheet plot keys match clipped SDDs and TerrADat")
++    }
++ 
++ 
++    ## OR THIS VERSION, based on plot names
++ 
++    newsfaST$TR<-0
++    newlvST$TR<-0
++    junk<-NULL
++ 
++    a<-temp.df				## The last EXCEL spreadsheet ingested
++    if(nrow(a)>0) {
++       for(j in 1:nrow(a)) {
++           tr<-0
++           b<-grep(newsfaST$PLOT_NM,pattern=a$PLOTIDC[j])
++           if(length(b)==1) {
++              tr<-1
++              newsfaST$TR[b]<-tr		## pts used for this season
++           }
++           b<-grep(newlvST$PLOT_NM,pattern=a$PLOTIDC[j])
++           if(length(b)==1){
++               tr<-2
++               newlvST$TR[b]<-tr	## Pts used for this season
++           }   
++ 
++ 	##  IF tr==0 then no match,
++           if(tr==0)junk<-rbind(junk,a[j ,])
++       }
++    }
++    if(!is.null(junk)) {
++         print("No matches to spreadsheet pts based on clipped plot name")
++         print(junk)
++    }else {
++        print("All spreadsheet plot names match clipped SDDs and TerrADat")
++    }
++ 
++ 
++ ############################## VI.  List the SDD/LMF pts not used for this season
++    for(i in 1:nrow(newsfaST)) {
++       if(newsfaST$TR[i]==0) print(paste("NOT USED",newsfaST$PLOT_NM[i],newsfaST$PLOT_KEY[i],newsfaST$DT_VST[i],sep=" "))
++    }
++    for(i in 1:nrow(newlvST)) {
++       if(newlvST$TR[i]==0) print(paste("NOT USED",newlvST$PLOT_NM[i],newlvST$PLOT_KEY[i],newlvST$DT_VST[i],sep=" "))
++    }
++ 
++ 
++  
++ ############################## VII.  Check the stratification of the AIM pts with appropriate stratum file.
++ ##NOTE - Use all AIM points that fall within the HABITAT, not just those with FINAL_DESG == TS
++ 
++   ## sfa strata
++    newsfaS<- spTransform(newsfaS, projection)  	## To be sure and avoid any problems
++    zz<-over(newsfaS,sfastrata.spdf)
++    newsfaS$STRATUM<-zz$STRATUM
++    newsfaS$ERR<-0
++    newsfaS$ERR[newsfaS$DSGN_STRTM_NM != newsfaS$STRATUM]<-1
++    zz<-grep(newsfaS$ERR,pattern="1")
++    if(length(zz)>0) {
++      for(i in zz) {
++         print(paste("SFA STRATUM ERROR",newsfaS$DSGN_STRTM_NM[i],newsfaS$STRATUM[i],sep="/"))
++      }
++    }
++    
++ 
++ ## LV strata
++    newlvS<- spTransform(newlvS, projection)  ## To be sure and avoid any problems
++    zz<-over(newlvS,lvstrata.spdf)
++    newlvS$STRATUM<-zz$DMNNT_STRTM
++    newlvS$ERR<-0
++    newlvS$ERR[newlvS$DSGN_STRTM_NM != newlvS$STRATUM]<-1
++    zz<-grep(newlvS$ERR,pattern="1")
++    if(length(zz)>0) {
++      for(i in zz) {
++         print(paste("LV STRATUM ERROR",newlvS$DSGN_STRTM_NM[i],newlvS$STRATUM[i],sep="/"))
++      }
++    }
++ 
++ }  ## end of for index
+[1] "INDEX=  1"
+[1] "No matches to spreadsheet pts based on plotkey"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA    LA_GRSG_087 2016-06-14      NA    LA_GRSG-087
+2   AIM     LA    LA_GRSG_091 2016-05-18      NA    LA_GRSG-091
+3   AIM     LA   LA_GRSG_1031 2017-06-03      NA   LA_GRSG-1031
+4   AIM     LA   LA_GRSG_1035 2017-05-22      NA   LA_GRSG-1035
+5   AIM     LA    LA_INTS_004 2016-05-17      NA    LA_INTS-004
+6   AIM     LA    LA_INTS_013 2016-06-16      NA    LA_INTS-013
+7   AIM     LA    LA_INTS_016 2016-06-30      NA    LA_INTS-016
+8   AIM     LA    LA_INTS_017 2016-06-29      NA    LA_INTS-017
+9   AIM     LA LA_UPS_SS_1098 2017-06-19      NA LA_UPS_SS-1098
+10  AIM     LA   LA_UPSH_1210 2017-06-03      NA   LA_UPSH-1210
+11  AIM    SFA SFA_FO_OTH_005 2016-06-28      NA SFA_FO_OTH-005
+12  AIM    SFA SFA_FO_OTH_012 2017-06-17      NA SFA_FO_OTH-012
+13  AIM    SFA   SFA_GRSG_061 2016-06-28      NA   SFA_GRSG-061
+14  AIM    SFA   SFA_GRSG_062 2016-06-28      NA   SFA_GRSG-062
+15  AIM    SFA   SFA_GRSG_077 2016-06-13      NA   SFA_GRSG-077
+16  AIM    SFA   SFA_GRSG_078 2016-06-29      NA   SFA_GRSG-078
+17  AIM    SFA   SFA_GRSG_109 2017-06-15      NA   SFA_GRSG-109
+18  AIM    SFA   SFA_GRSG_110 2017-06-20      NA   SFA_GRSG-110
+19  AIM    SFA   SFA_GRSG_114 2017-06-30      NA   SFA_GRSG-114
+20  AIM    SFA   SFA_GRSG_125 2017-06-04      NA   SFA_GRSG-125
+21  AIM    SFA   SFA_GRSG_126 2017-06-18      NA   SFA_GRSG-126
+22  AIM    SFA   SFA_GRSG_130 2017-06-17      NA   SFA_GRSG-130
+23  AIM    SFA   SFA_GRSG_142 2017-06-05      NA   SFA_GRSG-142
+24  AIM    SFA   SFA_GRSG_158 2017-06-30      NA   SFA_GRSG-158
+25  AIM    SFA   SFA_GRSG_358 2017-06-18      NA   SFA_GRSG-358
+26  AIM    SFA   SFA_GRSG-146 2017-06-29      NA   SFA_GRSG-146
+27  AIM    SFA SFA_UPS_SS_434 2017-06-20      NA SFA_UPS_SS-434
+28  AIM    SFA SFA_UPS_SS_449 2017-06-14      NA SFA_UPS_SS-449
+29  AIM    SFA SFA_UPS_SS_465 2017-06-29      NA SFA_UPS_SS-465
+30  AIM    SFA   SFA_UPSH_656 2016-06-14      NA   SFA_UPSH-656
+31  AIM    SFA   SFA_UPSH_672 2016-06-29      NA   SFA_UPSH-672
+32  AIM    SFA   SFA_UPSH_688 2017-06-04      NA   SFA_UPSH-688
+33  AIM    SFA   SFA_UPSH_703 2017-06-19      NA   SFA_UPSH-703
+34  AIM    SFA   SFA_UPSH_704 2017-06-02      NA   SFA_UPSH-704
+35  AIM    SFA  SFA_WE_RI_798 2016-06-20      NA  SFA_WE_RI-798
+36  AIM    SFA  SFA_WE_RI_803 2017-06-16      NA  SFA_WE_RI-803
+[1] "All spreadsheet plot names match SDDs and TerrADat"
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 38 features
+It has 27 fields
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 41 features
+It has 24 fields
+[1] "CLIPPED SFA POINTS"
+             NAME                                 FRAME           PANEL
+1  SFA_FO_OTH-001 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+2  SFA_FO_OTH-002 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+3  SFA_FO_OTH-005 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+4    SFA_GRSG-046 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+5    SFA_GRSG-050 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+6    SFA_GRSG-061 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+7    SFA_GRSG-062 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+8    SFA_GRSG-066 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+9    SFA_GRSG-077 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+10   SFA_GRSG-078 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+11   SFA_GRSG-094 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+12   SFA_GRSG-105 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+13 SFA_UPS_SS-386 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+14 SFA_UPS_SS-401 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+15 SFA_UPS_SS-417 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+16   SFA_UPSH-656 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+17   SFA_UPSH-672 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+18  SFA_WE_RI-798 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+19 SFA_FO_OTH-012 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+20   SFA_GRSG-109 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+21   SFA_GRSG-110 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+22   SFA_GRSG-114 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+23   SFA_GRSG-125 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+24   SFA_GRSG-126 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+25   SFA_GRSG-130 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+26   SFA_GRSG-142 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+27   SFA_GRSG-146 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+28   SFA_GRSG-158 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+29   SFA_GRSG-169 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+30   SFA_GRSG-358 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2017
+31 SFA_UPS_SS-434 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+32 SFA_UPS_SS-449 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+33 SFA_UPS_SS-465 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+34   SFA_UPSH-688 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+35   SFA_UPSH-703 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+36   SFA_UPSH-704 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+37  SFA_WE_RI-803 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+38 SFA_FO_OTH-031 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2016
+               PKEY  FD                DATE
+1              <NA>  IA                <NA>
+2              <NA>  IA                <NA>
+3  1609141617142853  TS 2016/06/28 00:00:00
+4  1610030719599530  TS 2016/07/19 00:00:00
+5  1610031126371025  TS 2016/07/14 00:00:00
+6  1609141312025083  TS 2016/06/28 00:00:00
+7  1608301323391780  TS 2016/06/28 00:00:00
+8  1609290826045176  TS 2016/07/19 00:00:00
+9  1607121152587356  TS 2016/06/13 00:00:00
+10  160830152655891  TS 2016/06/29 00:00:00
+11             <NA> UNK                <NA>
+12             <NA>  NN                <NA>
+13 1609210934575861  TS 2016/07/13 00:00:00
+14             <NA> UNK                <NA>
+15             <NA> UNK                <NA>
+16 1608110735048936  TS 2016/06/14 00:00:00
+17 1609140908058223  TS 2016/06/29 00:00:00
+18 1609131441363885  TS 2016/06/20 00:00:00
+19             <NA>  TS            20170617
+20             <NA>  TS            20170615
+21             <NA>  TS            20170620
+22             <NA>  TS            20170630
+23             <NA>  TS            20170604
+24             <NA>  TS            20170618
+25             <NA>  TS            20170617
+26             <NA>  TS            20170605
+27             <NA>  TS            20170629
+28             <NA>  TS            20170630
+29             <NA>  IA                <NA>
+30             <NA>  TS            20170618
+31             <NA>  TS            20170620
+32             <NA>  TS            20170614
+33             <NA>  TS            20170629
+34             <NA>  TS            20170604
+35             <NA>  TS            20170619
+36             <NA>  TS            20170602
+37             <NA>  TS            20170616
+38 1609191144408516  TS 2016/07/08 00:00:00
+[1] "CLIPPED LV POINTS"
+             NAME                                     FRAME           PANEL
+1   LA_FO_OTH-010 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+2     LA_GRSG-084 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+3     LA_GRSG-087 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+4     LA_GRSG-088 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+5     LA_GRSG-091 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+6     LA_GRSG-092 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+7     LA_GRSG-096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+8     LA_GRSG-100 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+9     LA_GRSG-103 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+10    LA_GRSG-196 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+11    LA_GRSG-197 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+12  LA_UPS_SS-225 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+13  LA_UPS_SS-239 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+14  LA_UPS_SS-255 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+15    LA_UPSH-641 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+16    LA_UPSH-650 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+17    LA_UPSH-651 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+18    LA_UPSH-653 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+19    LA_UPSH-658 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+20    LA_INTS-002 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+21    LA_INTS-004 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+22    LA_INTS-006 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+23    LA_INTS-008 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+24    LA_INTS-010 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+25    LA_INTS-012 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+26    LA_INTS-013 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+27    LA_INTS-016 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+28    LA_INTS-017 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+29    LA_INTS-020 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+30   LA_GRSG-1030 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+31   LA_GRSG-1031 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+32   LA_GRSG-1032 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+33   LA_GRSG-1033 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+34   LA_GRSG-1034 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+35   LA_GRSG-1035 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+36 LA_UPS_SS-1092 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+37 LA_UPS_SS-1096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+38 LA_UPS_SS-1098 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+39   LA_UPSH-1205 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+40   LA_UPSH-1210 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+41   LA_UPSH-1211 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+               PKEY  FD                DATE
+1  1610031716177680  TS 2016/08/30 00:00:00
+2  1609270720191504  TS 2016/07/13 00:00:00
+3  1607130715125465  TS 2016/06/14 00:00:00
+4  1609271104475606  TS 2016/07/11 00:00:00
+5  1605251351102527  TS 2016/05/18 00:00:00
+6  1609281025462465  TS 2016/07/20 00:00:00
+7              <NA>  NN                <NA>
+8              <NA>  NN                <NA>
+9              <NA>  NN                <NA>
+10             <NA>  NN                <NA>
+11             <NA>  NN                <NA>
+12 1609061310256819  TS 2016/07/07 00:00:00
+13 1609291442089881  TS 2016/07/26 00:00:00
+14 1609261449284846  TS 2016/08/01 00:00:00
+15  160926165450391  TS 2016/08/02 00:00:00
+16 1609211517391657  TS 2016/07/14 00:00:00
+17 1609060706248531  TS 2016/07/06 00:00:00
+18  160928093251765  TS 2016/08/03 00:00:00
+19             <NA> UNK                <NA>
+20 1609191629544296  TS 2016/07/07 00:00:00
+21 1605261509201092  TS 2016/05/17 00:00:00
+22 1609211635077890  TS 2016/07/18 00:00:00
+23 1609211332582689  TS 2016/07/11 00:00:00
+24 1609211516045801  TS 2016/07/13 00:00:00
+25 1609191443516915  TS 2016/07/06 00:00:00
+26 1606211649493756  TS 2016/06/16 00:00:00
+27 1609191125062328  TS 2016/06/30 00:00:00
+28 1609190842322666  TS 2016/06/29 00:00:00
+29 1609210905409491  TS 2016/07/11 00:00:00
+30             <NA>  TS            20170730
+31             <NA>  TS            20170603
+32             <NA>  TS            20170717
+33             <NA>  TS            20170712
+34             <NA>  TS            20170701
+35             <NA>  TS            20170522
+36             <NA>  TS            20170714
+37             <NA>  TS            20170713
+38             <NA>  TS            20170619
+39             <NA>  TS            20170715
+40             <NA>  TS            20170603
+41             <NA>  TS            20170701
+[1] "No matches to spreadsheet pts based on clipped plot key"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA    LA_GRSG_087 2016-06-14      NA    LA_GRSG-087
+2   AIM     LA    LA_GRSG_091 2016-05-18      NA    LA_GRSG-091
+3   AIM     LA   LA_GRSG_1031 2017-06-03      NA   LA_GRSG-1031
+4   AIM     LA   LA_GRSG_1035 2017-05-22      NA   LA_GRSG-1035
+5   AIM     LA    LA_INTS_004 2016-05-17      NA    LA_INTS-004
+6   AIM     LA    LA_INTS_013 2016-06-16      NA    LA_INTS-013
+7   AIM     LA    LA_INTS_016 2016-06-30      NA    LA_INTS-016
+8   AIM     LA    LA_INTS_017 2016-06-29      NA    LA_INTS-017
+9   AIM     LA LA_UPS_SS_1098 2017-06-19      NA LA_UPS_SS-1098
+10  AIM     LA   LA_UPSH_1210 2017-06-03      NA   LA_UPSH-1210
+11  AIM    SFA SFA_FO_OTH_005 2016-06-28      NA SFA_FO_OTH-005
+12  AIM    SFA SFA_FO_OTH_012 2017-06-17      NA SFA_FO_OTH-012
+13  AIM    SFA   SFA_GRSG_061 2016-06-28      NA   SFA_GRSG-061
+14  AIM    SFA   SFA_GRSG_062 2016-06-28      NA   SFA_GRSG-062
+15  AIM    SFA   SFA_GRSG_077 2016-06-13      NA   SFA_GRSG-077
+16  AIM    SFA   SFA_GRSG_078 2016-06-29      NA   SFA_GRSG-078
+17  AIM    SFA   SFA_GRSG_109 2017-06-15      NA   SFA_GRSG-109
+18  AIM    SFA   SFA_GRSG_110 2017-06-20      NA   SFA_GRSG-110
+19  AIM    SFA   SFA_GRSG_114 2017-06-30      NA   SFA_GRSG-114
+20  AIM    SFA   SFA_GRSG_125 2017-06-04      NA   SFA_GRSG-125
+21  AIM    SFA   SFA_GRSG_126 2017-06-18      NA   SFA_GRSG-126
+22  AIM    SFA   SFA_GRSG_130 2017-06-17      NA   SFA_GRSG-130
+23  AIM    SFA   SFA_GRSG_142 2017-06-05      NA   SFA_GRSG-142
+24  AIM    SFA   SFA_GRSG_158 2017-06-30      NA   SFA_GRSG-158
+25  AIM    SFA   SFA_GRSG_358 2017-06-18      NA   SFA_GRSG-358
+26  AIM    SFA   SFA_GRSG-146 2017-06-29      NA   SFA_GRSG-146
+27  AIM    SFA SFA_UPS_SS_434 2017-06-20      NA SFA_UPS_SS-434
+28  AIM    SFA SFA_UPS_SS_449 2017-06-14      NA SFA_UPS_SS-449
+29  AIM    SFA SFA_UPS_SS_465 2017-06-29      NA SFA_UPS_SS-465
+30  AIM    SFA   SFA_UPSH_656 2016-06-14      NA   SFA_UPSH-656
+31  AIM    SFA   SFA_UPSH_672 2016-06-29      NA   SFA_UPSH-672
+32  AIM    SFA   SFA_UPSH_688 2017-06-04      NA   SFA_UPSH-688
+33  AIM    SFA   SFA_UPSH_703 2017-06-19      NA   SFA_UPSH-703
+34  AIM    SFA   SFA_UPSH_704 2017-06-02      NA   SFA_UPSH-704
+35  AIM    SFA  SFA_WE_RI_798 2016-06-20      NA  SFA_WE_RI-798
+36  AIM    SFA  SFA_WE_RI_803 2017-06-16      NA  SFA_WE_RI-803
+[1] "All spreadsheet plot names match clipped SDDs and TerrADat"
+[1] "NOT USED SFA_GRSG-046 1610030719599530 2016/07/19 00:00:00"
+[1] "NOT USED SFA_GRSG-050 1610031126371025 2016/07/14 00:00:00"
+[1] "NOT USED SFA_GRSG-066 1609290826045176 2016/07/19 00:00:00"
+[1] "NOT USED SFA_UPS_SS-386 1609210934575861 2016/07/13 00:00:00"
+[1] "NOT USED SFA_FO_OTH-031 1609191144408516 2016/07/08 00:00:00"
+[1] "NOT USED LA_FO_OTH-010 1610031716177680 2016/08/30 00:00:00"
+[1] "NOT USED LA_GRSG-084 1609270720191504 2016/07/13 00:00:00"
+[1] "NOT USED LA_GRSG-088 1609271104475606 2016/07/11 00:00:00"
+[1] "NOT USED LA_GRSG-092 1609281025462465 2016/07/20 00:00:00"
+[1] "NOT USED LA_UPS_SS-225 1609061310256819 2016/07/07 00:00:00"
+[1] "NOT USED LA_UPS_SS-239 1609291442089881 2016/07/26 00:00:00"
+[1] "NOT USED LA_UPS_SS-255 1609261449284846 2016/08/01 00:00:00"
+[1] "NOT USED LA_UPSH-641 160926165450391 2016/08/02 00:00:00"
+[1] "NOT USED LA_UPSH-650 1609211517391657 2016/07/14 00:00:00"
+[1] "NOT USED LA_UPSH-651 1609060706248531 2016/07/06 00:00:00"
+[1] "NOT USED LA_UPSH-653 160928093251765 2016/08/03 00:00:00"
+[1] "NOT USED LA_INTS-002 1609191629544296 2016/07/07 00:00:00"
+[1] "NOT USED LA_INTS-006 1609211635077890 2016/07/18 00:00:00"
+[1] "NOT USED LA_INTS-008 1609211332582689 2016/07/11 00:00:00"
+[1] "NOT USED LA_INTS-010 1609211516045801 2016/07/13 00:00:00"
+[1] "NOT USED LA_INTS-012 1609191443516915 2016/07/06 00:00:00"
+[1] "NOT USED LA_INTS-020 1609210905409491 2016/07/11 00:00:00"
+[1] "NOT USED LA_GRSG-1030 NA 20170730"
+[1] "NOT USED LA_GRSG-1032 NA 20170717"
+[1] "NOT USED LA_GRSG-1033 NA 20170712"
+[1] "NOT USED LA_GRSG-1034 NA 20170701"
+[1] "NOT USED LA_UPS_SS-1092 NA 20170714"
+[1] "NOT USED LA_UPS_SS-1096 NA 20170713"
+[1] "NOT USED LA_UPSH-1205 NA 20170715"
+[1] "NOT USED LA_UPSH-1211 NA 20170701"
+[1] "LV STRATUM ERROR/Forest and Other/Forest and Woodland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Shrubland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/GRSG Seasonal Habitat"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/Forest and Woodland"
+[1] "INDEX=  2"
+[1] "No matches to spreadsheet pts based on plotkey"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+2   AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+3   AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+4   AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+5   AIM    SFA SFA_FO_OTH_031 2016-07-08      NA SFA_FO_OTH-031
+6   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+7   AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+8   AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+9   AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+10  AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+11  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+12  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+13  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+14  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+15  AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+16  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+17  AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+18  AIM     LA    LA_UPSH_641 2016-08-02      NA    LA_UPSH-641
+19  AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+20  AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+21  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+22  AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+[1] "All spreadsheet plot names match SDDs and TerrADat"
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 36 features
+It has 27 fields
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 33 features
+It has 24 fields
+[1] "CLIPPED SFA POINTS"
+             NAME                                 FRAME           PANEL
+1  SFA_FO_OTH-001 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+2  SFA_FO_OTH-005 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+3    SFA_GRSG-046 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+4    SFA_GRSG-050 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+5    SFA_GRSG-061 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+6    SFA_GRSG-062 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+7    SFA_GRSG-077 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+8    SFA_GRSG-078 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+9    SFA_GRSG-082 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+10   SFA_GRSG-094 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+11   SFA_GRSG-105 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+12 SFA_UPS_SS-385 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+13 SFA_UPS_SS-386 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+14 SFA_UPS_SS-401 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+15 SFA_UPS_SS-417 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+16   SFA_UPSH-656 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+17   SFA_UPSH-672 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+18  SFA_WE_RI-798 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+19 SFA_FO_OTH-012 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+20   SFA_GRSG-109 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+21   SFA_GRSG-114 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+22   SFA_GRSG-125 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+23   SFA_GRSG-126 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+24   SFA_GRSG-130 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+25   SFA_GRSG-142 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+26   SFA_GRSG-146 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+27   SFA_GRSG-158 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+28   SFA_GRSG-169 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+29   SFA_GRSG-358 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2017
+30 SFA_UPS_SS-449 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+31 SFA_UPS_SS-465 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+32   SFA_UPSH-688 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+33   SFA_UPSH-703 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+34   SFA_UPSH-704 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+35  SFA_WE_RI-803 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+36 SFA_FO_OTH-031 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2016
+               PKEY  FD                DATE
+1              <NA>  IA                <NA>
+2  1609141617142853  TS 2016/06/28 00:00:00
+3  1610030719599530  TS 2016/07/19 00:00:00
+4  1610031126371025  TS 2016/07/14 00:00:00
+5  1609141312025083  TS 2016/06/28 00:00:00
+6  1608301323391780  TS 2016/06/28 00:00:00
+7  1607121152587356  TS 2016/06/13 00:00:00
+8   160830152655891  TS 2016/06/29 00:00:00
+9  1609291042584850  TS 2016/07/12 00:00:00
+10             <NA> UNK                <NA>
+11             <NA>  NN                <NA>
+12 1608221601026326  TS 2016/06/15 00:00:00
+13 1609210934575861  TS 2016/07/13 00:00:00
+14             <NA> UNK                <NA>
+15             <NA> UNK                <NA>
+16 1608110735048936  TS 2016/06/14 00:00:00
+17 1609140908058223  TS 2016/06/29 00:00:00
+18 1609131441363885  TS 2016/06/20 00:00:00
+19             <NA>  TS            20170617
+20             <NA>  TS            20170615
+21             <NA>  TS            20170630
+22             <NA>  TS            20170604
+23             <NA>  TS            20170618
+24             <NA>  TS            20170617
+25             <NA>  TS            20170605
+26             <NA>  TS            20170629
+27             <NA>  TS            20170630
+28             <NA>  IA                <NA>
+29             <NA>  TS            20170618
+30             <NA>  TS            20170614
+31             <NA>  TS            20170629
+32             <NA>  TS            20170604
+33             <NA>  TS            20170619
+34             <NA>  TS            20170602
+35             <NA>  TS            20170616
+36 1609191144408516  TS 2016/07/08 00:00:00
+[1] "CLIPPED LV POINTS"
+            NAME                                     FRAME           PANEL
+1  LA_FO_OTH-010 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+2    LA_GRSG-084 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+3    LA_GRSG-087 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+4    LA_GRSG-088 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+5    LA_GRSG-091 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+6    LA_GRSG-092 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+7    LA_GRSG-096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+8    LA_GRSG-100 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+9    LA_GRSG-103 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+10   LA_GRSG-196 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+11   LA_GRSG-197 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+12 LA_UPS_SS-225 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+13   LA_UPSH-641 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+14   LA_UPSH-650 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+15   LA_UPSH-651 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+16   LA_UPSH-657 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+17   LA_UPSH-658 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+18   LA_INTS-002 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+19   LA_INTS-004 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+20   LA_INTS-006 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+21   LA_INTS-008 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+22   LA_INTS-010 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+23   LA_INTS-012 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+24   LA_INTS-013 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+25   LA_INTS-016 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+26   LA_INTS-017 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+27   LA_INTS-020 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+28  LA_GRSG-1030 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+29  LA_GRSG-1031 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+30  LA_GRSG-1034 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+31  LA_GRSG-1035 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+32  LA_UPSH-1210 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+33  LA_UPSH-1211 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+               PKEY  FD                DATE
+1  1610031716177680  TS 2016/08/30 00:00:00
+2  1609270720191504  TS 2016/07/13 00:00:00
+3  1607130715125465  TS 2016/06/14 00:00:00
+4  1609271104475606  TS 2016/07/11 00:00:00
+5  1605251351102527  TS 2016/05/18 00:00:00
+6  1609281025462465  TS 2016/07/20 00:00:00
+7              <NA>  NN                <NA>
+8              <NA>  NN                <NA>
+9              <NA>  NN                <NA>
+10             <NA>  NN                <NA>
+11             <NA>  NN                <NA>
+12 1609061310256819  TS 2016/07/07 00:00:00
+13  160926165450391  TS 2016/08/02 00:00:00
+14 1609211517391657  TS 2016/07/14 00:00:00
+15 1609060706248531  TS 2016/07/06 00:00:00
+16             <NA> UNK                <NA>
+17             <NA> UNK                <NA>
+18 1609191629544296  TS 2016/07/07 00:00:00
+19 1605261509201092  TS 2016/05/17 00:00:00
+20 1609211635077890  TS 2016/07/18 00:00:00
+21 1609211332582689  TS 2016/07/11 00:00:00
+22 1609211516045801  TS 2016/07/13 00:00:00
+23 1609191443516915  TS 2016/07/06 00:00:00
+24 1606211649493756  TS 2016/06/16 00:00:00
+25 1609191125062328  TS 2016/06/30 00:00:00
+26 1609190842322666  TS 2016/06/29 00:00:00
+27 1609210905409491  TS 2016/07/11 00:00:00
+28             <NA>  TS            20170730
+29             <NA>  TS            20170603
+30             <NA>  TS            20170701
+31             <NA>  TS            20170522
+32             <NA>  TS            20170603
+33             <NA>  TS            20170701
+[1] "No matches to spreadsheet pts based on clipped plot key"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+2   AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+3   AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+4   AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+5   AIM    SFA SFA_FO_OTH_031 2016-07-08      NA SFA_FO_OTH-031
+6   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+7   AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+8   AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+9   AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+10  AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+11  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+12  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+13  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+14  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+15  AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+16  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+17  AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+18  AIM     LA    LA_UPSH_641 2016-08-02      NA    LA_UPSH-641
+19  AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+20  AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+21  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+22  AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+[1] "All spreadsheet plot names match clipped SDDs and TerrADat"
+[1] "NOT USED SFA_FO_OTH-005 1609141617142853 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-061 1609141312025083 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-062 1608301323391780 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-077 1607121152587356 2016/06/13 00:00:00"
+[1] "NOT USED SFA_GRSG-078 160830152655891 2016/06/29 00:00:00"
+[1] "NOT USED SFA_UPS_SS-385 1608221601026326 2016/06/15 00:00:00"
+[1] "NOT USED SFA_UPSH-656 1608110735048936 2016/06/14 00:00:00"
+[1] "NOT USED SFA_UPSH-672 1609140908058223 2016/06/29 00:00:00"
+[1] "NOT USED SFA_WE_RI-798 1609131441363885 2016/06/20 00:00:00"
+[1] "NOT USED SFA_FO_OTH-012 NA 20170617"
+[1] "NOT USED SFA_GRSG-109 NA 20170615"
+[1] "NOT USED SFA_GRSG-114 NA 20170630"
+[1] "NOT USED SFA_GRSG-125 NA 20170604"
+[1] "NOT USED SFA_GRSG-126 NA 20170618"
+[1] "NOT USED SFA_GRSG-130 NA 20170617"
+[1] "NOT USED SFA_GRSG-142 NA 20170605"
+[1] "NOT USED SFA_GRSG-146 NA 20170629"
+[1] "NOT USED SFA_GRSG-158 NA 20170630"
+[1] "NOT USED SFA_GRSG-358 NA 20170618"
+[1] "NOT USED SFA_UPS_SS-449 NA 20170614"
+[1] "NOT USED SFA_UPS_SS-465 NA 20170629"
+[1] "NOT USED SFA_UPSH-688 NA 20170604"
+[1] "NOT USED SFA_UPSH-703 NA 20170619"
+[1] "NOT USED SFA_UPSH-704 NA 20170602"
+[1] "NOT USED SFA_WE_RI-803 NA 20170616"
+[1] "NOT USED LA_GRSG-087 1607130715125465 2016/06/14 00:00:00"
+[1] "NOT USED LA_GRSG-091 1605251351102527 2016/05/18 00:00:00"
+[1] "NOT USED LA_INTS-004 1605261509201092 2016/05/17 00:00:00"
+[1] "NOT USED LA_INTS-013 1606211649493756 2016/06/16 00:00:00"
+[1] "NOT USED LA_INTS-016 1609191125062328 2016/06/30 00:00:00"
+[1] "NOT USED LA_INTS-017 1609190842322666 2016/06/29 00:00:00"
+[1] "NOT USED LA_GRSG-1031 NA 20170603"
+[1] "NOT USED LA_GRSG-1035 NA 20170522"
+[1] "NOT USED LA_UPSH-1210 NA 20170603"
+[1] "LV STRATUM ERROR/Forest and Other/Forest and Woodland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Shrubland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/GRSG Seasonal Habitat"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/Forest and Woodland"
+[1] "INDEX=  3"
+[1] "No matches to spreadsheet pts based on plotkey"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+2   AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+3   AIM     LA    LA_GRSG_087 2016-06-14      NA    LA_GRSG-087
+4   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+5   AIM     LA    LA_GRSG_091 2016-05-18      NA    LA_GRSG-091
+6   AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+7   AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+8   AIM     LA   LA_GRSG_1031 2017-06-03      NA   LA_GRSG-1031
+9   AIM     LA   LA_GRSG_1032 2017-07-17      NA   LA_GRSG-1032
+10  AIM     LA   LA_GRSG_1033 2017-07-12      NA   LA_GRSG-1033
+11  AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+12  AIM     LA   LA_GRSG_1035 2017-05-22      NA   LA_GRSG-1035
+13  AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+14  AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+15  AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+16  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+17  AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+18  AIM     LA    LA_INTS_013 2016-06-16      NA    LA_INTS-013
+19  AIM     LA    LA_INTS_016 2016-06-30      NA    LA_INTS-016
+20  AIM     LA    LA_INTS_017 2016-06-29      NA    LA_INTS-017
+21  AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+22  AIM     LA LA_UPS_SS_1080 2017-07-14      NA LA_UPS_SS-1080
+23  AIM     LA LA_UPS_SS_1091 2017-06-05      NA LA_UPS_SS-1091
+24  AIM     LA LA_UPS_SS_1096 2017-07-13      NA LA_UPS_SS-1096
+25  AIM     LA  LA_UPS_SS_219 2016-07-27      NA  LA_UPS_SS-219
+26  AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+27  AIM     LA  LA_UPS_SS_239 2016-07-26      NA  LA_UPS_SS-239
+28  AIM     LA  LA_UPS_SS_244 2016-07-27      NA  LA_UPS_SS-244
+29  AIM     LA  LA_UPS_SS_255 2016-08-01      NA  LA_UPS_SS-255
+30  AIM     LA   LA_UPSH_1210 2017-06-03      NA   LA_UPSH-1210
+31  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+32  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+33  AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+34  AIM    SFA SFA_FO_OTH_012 2017-06-17      NA SFA_FO_OTH-012
+35  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+36  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+37  AIM    SFA   SFA_GRSG_061 2016-06-28      NA   SFA_GRSG-061
+38  AIM    SFA   SFA_GRSG_062 2016-06-28      NA   SFA_GRSG-062
+39  AIM    SFA   SFA_GRSG_066 2016-07-19      NA   SFA_GRSG-066
+40  AIM    SFA   SFA_GRSG_077 2016-06-13      NA   SFA_GRSG-077
+41  AIM    SFA   SFA_GRSG_078 2016-06-29      NA   SFA_GRSG-078
+42  AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+43  AIM    SFA   SFA_GRSG_109 2017-06-15      NA   SFA_GRSG-109
+44  AIM    SFA   SFA_GRSG_110 2017-06-20      NA   SFA_GRSG-110
+45  AIM    SFA   SFA_GRSG_114 2017-06-30      NA   SFA_GRSG-114
+46  AIM    SFA   SFA_GRSG_125 2017-06-04      NA   SFA_GRSG-125
+47  AIM    SFA   SFA_GRSG_126 2017-06-18      NA   SFA_GRSG-126
+48  AIM    SFA   SFA_GRSG_130 2017-06-17      NA   SFA_GRSG-130
+49  AIM    SFA   SFA_GRSG_142 2017-06-05      NA   SFA_GRSG-142
+50  AIM    SFA   SFA_GRSG_146 2017-06-29      NA   SFA_GRSG-146
+51  AIM    SFA   SFA_GRSG_158 2017-06-30      NA   SFA_GRSG-158
+52  AIM    SFA   SFA_GRSG_358 2017-06-18      NA   SFA_GRSG-358
+53  AIM    SFA SFA_UPS_SS_385 2016-06-15      NA SFA_UPS_SS-385
+54  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+55  AIM    SFA SFA_UPS_SS_465 2017-06-29      NA SFA_UPS_SS-465
+56  AIM    SFA   SFA_UPSH_656 2016-06-14      NA   SFA_UPSH-656
+57  AIM    SFA   SFA_UPSH_672 2016-06-29      NA   SFA_UPSH-672
+58  AIM    SFA   SFA_UPSH_688 2017-06-04      NA   SFA_UPSH-688
+59  AIM    SFA   SFA_UPSH_703 2017-06-19      NA   SFA_UPSH-703
+60  AIM    SFA   SFA_UPSH-704 2017-06-02      NA   SFA_UPSH-704
+61  AIM    SFA  SFA_WE_RI_803 2017-06-16      NA  SFA_WE_RI-803
+62  AIM    SFA SFA_UPS_SS-434 2017-06-20      NA SFA_UPS_SS-434
+63  AIM    SFA  SFA_WE_RI-798 2016-06-20      NA  SFA_WE_RI-798
+[1] "All spreadsheet plot names match SDDs and TerrADat"
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 36 features
+It has 27 fields
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 39 features
+It has 24 fields
+[1] "CLIPPED SFA POINTS"
+             NAME                                 FRAME           PANEL
+1  SFA_FO_OTH-001 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+2    SFA_GRSG-046 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+3    SFA_GRSG-050 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+4    SFA_GRSG-061 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+5    SFA_GRSG-062 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+6    SFA_GRSG-066 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+7    SFA_GRSG-077 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+8    SFA_GRSG-078 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+9    SFA_GRSG-082 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+10   SFA_GRSG-094 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+11   SFA_GRSG-105 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+12 SFA_UPS_SS-385 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+13 SFA_UPS_SS-386 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+14 SFA_UPS_SS-401 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+15 SFA_UPS_SS-417 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+16   SFA_UPSH-656 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+17   SFA_UPSH-672 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+18  SFA_WE_RI-798 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+19 SFA_FO_OTH-012 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+20   SFA_GRSG-109 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+21   SFA_GRSG-110 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+22   SFA_GRSG-114 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+23   SFA_GRSG-125 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+24   SFA_GRSG-126 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+25   SFA_GRSG-130 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+26   SFA_GRSG-142 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+27   SFA_GRSG-146 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+28   SFA_GRSG-158 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+29   SFA_GRSG-169 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+30   SFA_GRSG-358 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2017
+31 SFA_UPS_SS-434 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+32 SFA_UPS_SS-465 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+33   SFA_UPSH-688 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+34   SFA_UPSH-703 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+35   SFA_UPSH-704 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+36  SFA_WE_RI-803 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+               PKEY  FD                DATE
+1              <NA>  IA                <NA>
+2  1610030719599530  TS 2016/07/19 00:00:00
+3  1610031126371025  TS 2016/07/14 00:00:00
+4  1609141312025083  TS 2016/06/28 00:00:00
+5  1608301323391780  TS 2016/06/28 00:00:00
+6  1609290826045176  TS 2016/07/19 00:00:00
+7  1607121152587356  TS 2016/06/13 00:00:00
+8   160830152655891  TS 2016/06/29 00:00:00
+9  1609291042584850  TS 2016/07/12 00:00:00
+10             <NA> UNK                <NA>
+11             <NA>  NN                <NA>
+12 1608221601026326  TS 2016/06/15 00:00:00
+13 1609210934575861  TS 2016/07/13 00:00:00
+14             <NA> UNK                <NA>
+15             <NA> UNK                <NA>
+16 1608110735048936  TS 2016/06/14 00:00:00
+17 1609140908058223  TS 2016/06/29 00:00:00
+18 1609131441363885  TS 2016/06/20 00:00:00
+19             <NA>  TS            20170617
+20             <NA>  TS            20170615
+21             <NA>  TS            20170620
+22             <NA>  TS            20170630
+23             <NA>  TS            20170604
+24             <NA>  TS            20170618
+25             <NA>  TS            20170617
+26             <NA>  TS            20170605
+27             <NA>  TS            20170629
+28             <NA>  TS            20170630
+29             <NA>  IA                <NA>
+30             <NA>  TS            20170618
+31             <NA>  TS            20170620
+32             <NA>  TS            20170629
+33             <NA>  TS            20170604
+34             <NA>  TS            20170619
+35             <NA>  TS            20170602
+36             <NA>  TS            20170616
+[1] "CLIPPED LV POINTS"
+             NAME                                     FRAME           PANEL
+1   LA_FO_OTH-010 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+2     LA_GRSG-084 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+3     LA_GRSG-087 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+4     LA_GRSG-088 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+5     LA_GRSG-091 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+6     LA_GRSG-092 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+7     LA_GRSG-096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+8     LA_GRSG-100 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+9     LA_GRSG-103 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+10    LA_GRSG-196 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+11    LA_GRSG-197 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+12  LA_UPS_SS-219 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+13  LA_UPS_SS-225 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+14  LA_UPS_SS-239 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+15  LA_UPS_SS-244 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+16  LA_UPS_SS-255 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+17    LA_UPSH-650 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+18    LA_UPSH-651 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+19    LA_UPSH-658 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+20    LA_INTS-002 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+21    LA_INTS-006 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+22    LA_INTS-008 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+23    LA_INTS-010 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+24    LA_INTS-012 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+25    LA_INTS-013 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+26    LA_INTS-016 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+27    LA_INTS-017 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+28    LA_INTS-020 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+29   LA_GRSG-1030 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+30   LA_GRSG-1031 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+31   LA_GRSG-1032 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+32   LA_GRSG-1033 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+33   LA_GRSG-1034 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+34   LA_GRSG-1035 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+35 LA_UPS_SS-1080 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+36 LA_UPS_SS-1091 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+37 LA_UPS_SS-1096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+38   LA_UPSH-1210 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+39   LA_UPSH-1211 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+               PKEY  FD                DATE
+1  1610031716177680  TS 2016/08/30 00:00:00
+2  1609270720191504  TS 2016/07/13 00:00:00
+3  1607130715125465  TS 2016/06/14 00:00:00
+4  1609271104475606  TS 2016/07/11 00:00:00
+5  1605251351102527  TS 2016/05/18 00:00:00
+6  1609281025462465  TS 2016/07/20 00:00:00
+7              <NA>  NN                <NA>
+8              <NA>  NN                <NA>
+9              <NA>  NN                <NA>
+10             <NA>  NN                <NA>
+11             <NA>  NN                <NA>
+12 1609280818154036  TS 2016/07/27 00:00:00
+13 1609061310256819  TS 2016/07/07 00:00:00
+14 1609291442089881  TS 2016/07/26 00:00:00
+15 1609291606228832  TS 2016/07/27 00:00:00
+16 1609261449284846  TS 2016/08/01 00:00:00
+17 1609211517391657  TS 2016/07/14 00:00:00
+18 1609060706248531  TS 2016/07/06 00:00:00
+19             <NA> UNK                <NA>
+20 1609191629544296  TS 2016/07/07 00:00:00
+21 1609211635077890  TS 2016/07/18 00:00:00
+22 1609211332582689  TS 2016/07/11 00:00:00
+23 1609211516045801  TS 2016/07/13 00:00:00
+24 1609191443516915  TS 2016/07/06 00:00:00
+25 1606211649493756  TS 2016/06/16 00:00:00
+26 1609191125062328  TS 2016/06/30 00:00:00
+27 1609190842322666  TS 2016/06/29 00:00:00
+28 1609210905409491  TS 2016/07/11 00:00:00
+29             <NA>  TS            20170730
+30             <NA>  TS            20170603
+31             <NA>  TS            20170717
+32             <NA>  TS            20170712
+33             <NA>  TS            20170701
+34             <NA>  TS            20170522
+35             <NA>  TS            20170714
+36             <NA>  TS            20170605
+37             <NA>  TS            20170713
+38             <NA>  TS            20170603
+39             <NA>  TS            20170701
+[1] "No matches to spreadsheet pts based on clipped plot key"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+2   AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+3   AIM     LA    LA_GRSG_087 2016-06-14      NA    LA_GRSG-087
+4   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+5   AIM     LA    LA_GRSG_091 2016-05-18      NA    LA_GRSG-091
+6   AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+7   AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+8   AIM     LA   LA_GRSG_1031 2017-06-03      NA   LA_GRSG-1031
+9   AIM     LA   LA_GRSG_1032 2017-07-17      NA   LA_GRSG-1032
+10  AIM     LA   LA_GRSG_1033 2017-07-12      NA   LA_GRSG-1033
+11  AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+12  AIM     LA   LA_GRSG_1035 2017-05-22      NA   LA_GRSG-1035
+13  AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+14  AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+15  AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+16  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+17  AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+18  AIM     LA    LA_INTS_013 2016-06-16      NA    LA_INTS-013
+19  AIM     LA    LA_INTS_016 2016-06-30      NA    LA_INTS-016
+20  AIM     LA    LA_INTS_017 2016-06-29      NA    LA_INTS-017
+21  AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+22  AIM     LA LA_UPS_SS_1080 2017-07-14      NA LA_UPS_SS-1080
+23  AIM     LA LA_UPS_SS_1091 2017-06-05      NA LA_UPS_SS-1091
+24  AIM     LA LA_UPS_SS_1096 2017-07-13      NA LA_UPS_SS-1096
+25  AIM     LA  LA_UPS_SS_219 2016-07-27      NA  LA_UPS_SS-219
+26  AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+27  AIM     LA  LA_UPS_SS_239 2016-07-26      NA  LA_UPS_SS-239
+28  AIM     LA  LA_UPS_SS_244 2016-07-27      NA  LA_UPS_SS-244
+29  AIM     LA  LA_UPS_SS_255 2016-08-01      NA  LA_UPS_SS-255
+30  AIM     LA   LA_UPSH_1210 2017-06-03      NA   LA_UPSH-1210
+31  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+32  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+33  AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+34  AIM    SFA SFA_FO_OTH_012 2017-06-17      NA SFA_FO_OTH-012
+35  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+36  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+37  AIM    SFA   SFA_GRSG_061 2016-06-28      NA   SFA_GRSG-061
+38  AIM    SFA   SFA_GRSG_062 2016-06-28      NA   SFA_GRSG-062
+39  AIM    SFA   SFA_GRSG_066 2016-07-19      NA   SFA_GRSG-066
+40  AIM    SFA   SFA_GRSG_077 2016-06-13      NA   SFA_GRSG-077
+41  AIM    SFA   SFA_GRSG_078 2016-06-29      NA   SFA_GRSG-078
+42  AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+43  AIM    SFA   SFA_GRSG_109 2017-06-15      NA   SFA_GRSG-109
+44  AIM    SFA   SFA_GRSG_110 2017-06-20      NA   SFA_GRSG-110
+45  AIM    SFA   SFA_GRSG_114 2017-06-30      NA   SFA_GRSG-114
+46  AIM    SFA   SFA_GRSG_125 2017-06-04      NA   SFA_GRSG-125
+47  AIM    SFA   SFA_GRSG_126 2017-06-18      NA   SFA_GRSG-126
+48  AIM    SFA   SFA_GRSG_130 2017-06-17      NA   SFA_GRSG-130
+49  AIM    SFA   SFA_GRSG_142 2017-06-05      NA   SFA_GRSG-142
+50  AIM    SFA   SFA_GRSG_146 2017-06-29      NA   SFA_GRSG-146
+51  AIM    SFA   SFA_GRSG_158 2017-06-30      NA   SFA_GRSG-158
+52  AIM    SFA   SFA_GRSG_358 2017-06-18      NA   SFA_GRSG-358
+53  AIM    SFA SFA_UPS_SS_385 2016-06-15      NA SFA_UPS_SS-385
+54  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+55  AIM    SFA SFA_UPS_SS_465 2017-06-29      NA SFA_UPS_SS-465
+56  AIM    SFA   SFA_UPSH_656 2016-06-14      NA   SFA_UPSH-656
+57  AIM    SFA   SFA_UPSH_672 2016-06-29      NA   SFA_UPSH-672
+58  AIM    SFA   SFA_UPSH_688 2017-06-04      NA   SFA_UPSH-688
+59  AIM    SFA   SFA_UPSH_703 2017-06-19      NA   SFA_UPSH-703
+60  AIM    SFA   SFA_UPSH-704 2017-06-02      NA   SFA_UPSH-704
+61  AIM    SFA  SFA_WE_RI_803 2017-06-16      NA  SFA_WE_RI-803
+62  AIM    SFA SFA_UPS_SS-434 2017-06-20      NA SFA_UPS_SS-434
+63  AIM    SFA  SFA_WE_RI-798 2016-06-20      NA  SFA_WE_RI-798
+[1] "All spreadsheet plot names match clipped SDDs and TerrADat"
+[1] "LV STRATUM ERROR/Forest and Other/Forest and Woodland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Shrubland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/GRSG Seasonal Habitat"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/Forest and Woodland"
+[1] "INDEX=  4"
+[1] "No matches to spreadsheet pts based on plotkey"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+2   AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+3   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+4   AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+5   AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+6   AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+7   AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+8   AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+9   AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+10  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+11  AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+12  AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+13  AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+14  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+15  AIM     LA    LA_UPSH_641 2016-08-02      NA    LA_UPSH-641
+16  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+17  AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+18  AIM    SFA SFA_FO_OTH_031 2016-07-08      NA SFA_FO_OTH-031
+19  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+20  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+21  AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+22  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+[1] "All spreadsheet plot names match SDDs and TerrADat"
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 36 features
+It has 27 fields
+OGR data source with driver: ESRI Shapefile 
+Source: "c:/projects/fohaf/or/warner/arcpy_temp", layer: "clipresults"
+with 33 features
+It has 24 fields
+[1] "CLIPPED SFA POINTS"
+             NAME                                 FRAME           PANEL
+1  SFA_FO_OTH-001 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+2  SFA_FO_OTH-005 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+3    SFA_GRSG-046 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+4    SFA_GRSG-050 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+5    SFA_GRSG-061 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+6    SFA_GRSG-062 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+7    SFA_GRSG-077 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+8    SFA_GRSG-078 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+9    SFA_GRSG-082 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+10   SFA_GRSG-094 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+11   SFA_GRSG-105 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+12 SFA_UPS_SS-385 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+13 SFA_UPS_SS-386 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+14 SFA_UPS_SS-401 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+15 SFA_UPS_SS-417 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+16   SFA_UPSH-656 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+17   SFA_UPSH-672 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+18  SFA_WE_RI-798 ORWA_SagebrushFocalArea_SampleFrame_1            2016
+19 SFA_FO_OTH-012 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+20   SFA_GRSG-109 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+21   SFA_GRSG-114 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+22   SFA_GRSG-125 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+23   SFA_GRSG-126 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+24   SFA_GRSG-130 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+25   SFA_GRSG-142 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+26   SFA_GRSG-146 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+27   SFA_GRSG-158 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+28   SFA_GRSG-169 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+29   SFA_GRSG-358 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2017
+30 SFA_UPS_SS-449 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+31 SFA_UPS_SS-465 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+32   SFA_UPSH-688 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+33   SFA_UPSH-703 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+34   SFA_UPSH-704 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+35  SFA_WE_RI-803 ORWA_SagebrushFocalArea_SampleFrame_1            2017
+36 SFA_FO_OTH-031 ORWA_SagebrushFocalArea_SampleFrame_1 OverSample 2016
+               PKEY  FD                DATE
+1              <NA>  IA                <NA>
+2  1609141617142853  TS 2016/06/28 00:00:00
+3  1610030719599530  TS 2016/07/19 00:00:00
+4  1610031126371025  TS 2016/07/14 00:00:00
+5  1609141312025083  TS 2016/06/28 00:00:00
+6  1608301323391780  TS 2016/06/28 00:00:00
+7  1607121152587356  TS 2016/06/13 00:00:00
+8   160830152655891  TS 2016/06/29 00:00:00
+9  1609291042584850  TS 2016/07/12 00:00:00
+10             <NA> UNK                <NA>
+11             <NA>  NN                <NA>
+12 1608221601026326  TS 2016/06/15 00:00:00
+13 1609210934575861  TS 2016/07/13 00:00:00
+14             <NA> UNK                <NA>
+15             <NA> UNK                <NA>
+16 1608110735048936  TS 2016/06/14 00:00:00
+17 1609140908058223  TS 2016/06/29 00:00:00
+18 1609131441363885  TS 2016/06/20 00:00:00
+19             <NA>  TS            20170617
+20             <NA>  TS            20170615
+21             <NA>  TS            20170630
+22             <NA>  TS            20170604
+23             <NA>  TS            20170618
+24             <NA>  TS            20170617
+25             <NA>  TS            20170605
+26             <NA>  TS            20170629
+27             <NA>  TS            20170630
+28             <NA>  IA                <NA>
+29             <NA>  TS            20170618
+30             <NA>  TS            20170614
+31             <NA>  TS            20170629
+32             <NA>  TS            20170604
+33             <NA>  TS            20170619
+34             <NA>  TS            20170602
+35             <NA>  TS            20170616
+36 1609191144408516  TS 2016/07/08 00:00:00
+[1] "CLIPPED LV POINTS"
+            NAME                                     FRAME           PANEL
+1  LA_FO_OTH-010 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+2    LA_GRSG-084 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+3    LA_GRSG-087 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+4    LA_GRSG-088 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+5    LA_GRSG-091 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+6    LA_GRSG-092 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+7    LA_GRSG-096 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+8    LA_GRSG-100 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+9    LA_GRSG-103 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+10   LA_GRSG-196 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+11   LA_GRSG-197 ORWA_LakeviewDistrictOffice_SampleFrame_1 OverSample 2016
+12 LA_UPS_SS-225 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+13   LA_UPSH-641 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+14   LA_UPSH-650 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+15   LA_UPSH-651 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+16   LA_UPSH-657 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+17   LA_UPSH-658 ORWA_LakeviewDistrictOffice_SampleFrame_1            2016
+18   LA_INTS-002 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+19   LA_INTS-004 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+20   LA_INTS-006 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+21   LA_INTS-008 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+22   LA_INTS-010 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+23   LA_INTS-012 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+24   LA_INTS-013 ORWA_LakeviewDistrictOffice_SampleFrame_2            2016
+25   LA_INTS-016 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+26   LA_INTS-017 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+27   LA_INTS-020 ORWA_LakeviewDistrictOffice_SampleFrame_2 OverSample 2016
+28  LA_GRSG-1030 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+29  LA_GRSG-1031 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+30  LA_GRSG-1034 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+31  LA_GRSG-1035 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+32  LA_UPSH-1210 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+33  LA_UPSH-1211 ORWA_LakeviewDistrictOffice_SampleFrame_1            2017
+               PKEY  FD                DATE
+1  1610031716177680  TS 2016/08/30 00:00:00
+2  1609270720191504  TS 2016/07/13 00:00:00
+3  1607130715125465  TS 2016/06/14 00:00:00
+4  1609271104475606  TS 2016/07/11 00:00:00
+5  1605251351102527  TS 2016/05/18 00:00:00
+6  1609281025462465  TS 2016/07/20 00:00:00
+7              <NA>  NN                <NA>
+8              <NA>  NN                <NA>
+9              <NA>  NN                <NA>
+10             <NA>  NN                <NA>
+11             <NA>  NN                <NA>
+12 1609061310256819  TS 2016/07/07 00:00:00
+13  160926165450391  TS 2016/08/02 00:00:00
+14 1609211517391657  TS 2016/07/14 00:00:00
+15 1609060706248531  TS 2016/07/06 00:00:00
+16             <NA> UNK                <NA>
+17             <NA> UNK                <NA>
+18 1609191629544296  TS 2016/07/07 00:00:00
+19 1605261509201092  TS 2016/05/17 00:00:00
+20 1609211635077890  TS 2016/07/18 00:00:00
+21 1609211332582689  TS 2016/07/11 00:00:00
+22 1609211516045801  TS 2016/07/13 00:00:00
+23 1609191443516915  TS 2016/07/06 00:00:00
+24 1606211649493756  TS 2016/06/16 00:00:00
+25 1609191125062328  TS 2016/06/30 00:00:00
+26 1609190842322666  TS 2016/06/29 00:00:00
+27 1609210905409491  TS 2016/07/11 00:00:00
+28             <NA>  TS            20170730
+29             <NA>  TS            20170603
+30             <NA>  TS            20170701
+31             <NA>  TS            20170522
+32             <NA>  TS            20170603
+33             <NA>  TS            20170701
+[1] "No matches to spreadsheet pts based on clipped plot key"
+   DATA DESIGN         PLOTID       DATE PLOTKEY        PLOTIDC
+1   AIM     LA  LA_FO_OTH_010 2016-08-30      NA  LA_FO_OTH-010
+2   AIM     LA    LA_GRSG_084 2016-07-13      NA    LA_GRSG-084
+3   AIM     LA    LA_GRSG_088 2016-07-11      NA    LA_GRSG-088
+4   AIM     LA    LA_GRSG_092 2016-07-20      NA    LA_GRSG-092
+5   AIM     LA   LA_GRSG_1030 2017-07-30      NA   LA_GRSG-1030
+6   AIM     LA   LA_GRSG_1034 2017-07-01      NA   LA_GRSG-1034
+7   AIM     LA    LA_INTS_002 2016-07-07      NA    LA_INTS-002
+8   AIM     LA    LA_INTS_006 2016-07-18      NA    LA_INTS-006
+9   AIM     LA    LA_INTS_008 2016-07-11      NA    LA_INTS-008
+10  AIM     LA    LA_INTS_010 2016-07-13      NA    LA_INTS-010
+11  AIM     LA    LA_INTS_012 2016-07-06      NA    LA_INTS-012
+12  AIM     LA    LA_INTS_020 2016-07-11      NA    LA_INTS-020
+13  AIM     LA  LA_UPS_SS_225 2016-07-07      NA  LA_UPS_SS-225
+14  AIM     LA   LA_UPSH_1211 2017-07-01      NA   LA_UPSH-1211
+15  AIM     LA    LA_UPSH_641 2016-08-02      NA    LA_UPSH-641
+16  AIM     LA    LA_UPSH_650 2016-07-14      NA    LA_UPSH-650
+17  AIM     LA    LA_UPSH_651 2016-07-06      NA    LA_UPSH-651
+18  AIM    SFA SFA_FO_OTH_031 2016-07-08      NA SFA_FO_OTH-031
+19  AIM    SFA   SFA_GRSG_046 2016-07-19      NA   SFA_GRSG-046
+20  AIM    SFA   SFA_GRSG_050 2016-07-14      NA   SFA_GRSG-050
+21  AIM    SFA   SFA_GRSG_082 2016-07-12      NA   SFA_GRSG-082
+22  AIM    SFA SFA_UPS_SS_386 2016-07-13      NA SFA_UPS_SS-386
+[1] "All spreadsheet plot names match clipped SDDs and TerrADat"
+[1] "NOT USED SFA_FO_OTH-005 1609141617142853 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-061 1609141312025083 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-062 1608301323391780 2016/06/28 00:00:00"
+[1] "NOT USED SFA_GRSG-077 1607121152587356 2016/06/13 00:00:00"
+[1] "NOT USED SFA_GRSG-078 160830152655891 2016/06/29 00:00:00"
+[1] "NOT USED SFA_UPS_SS-385 1608221601026326 2016/06/15 00:00:00"
+[1] "NOT USED SFA_UPSH-656 1608110735048936 2016/06/14 00:00:00"
+[1] "NOT USED SFA_UPSH-672 1609140908058223 2016/06/29 00:00:00"
+[1] "NOT USED SFA_WE_RI-798 1609131441363885 2016/06/20 00:00:00"
+[1] "NOT USED SFA_FO_OTH-012 NA 20170617"
+[1] "NOT USED SFA_GRSG-109 NA 20170615"
+[1] "NOT USED SFA_GRSG-114 NA 20170630"
+[1] "NOT USED SFA_GRSG-125 NA 20170604"
+[1] "NOT USED SFA_GRSG-126 NA 20170618"
+[1] "NOT USED SFA_GRSG-130 NA 20170617"
+[1] "NOT USED SFA_GRSG-142 NA 20170605"
+[1] "NOT USED SFA_GRSG-146 NA 20170629"
+[1] "NOT USED SFA_GRSG-158 NA 20170630"
+[1] "NOT USED SFA_GRSG-358 NA 20170618"
+[1] "NOT USED SFA_UPS_SS-449 NA 20170614"
+[1] "NOT USED SFA_UPS_SS-465 NA 20170629"
+[1] "NOT USED SFA_UPSH-688 NA 20170604"
+[1] "NOT USED SFA_UPSH-703 NA 20170619"
+[1] "NOT USED SFA_UPSH-704 NA 20170602"
+[1] "NOT USED SFA_WE_RI-803 NA 20170616"
+[1] "NOT USED LA_GRSG-087 1607130715125465 2016/06/14 00:00:00"
+[1] "NOT USED LA_GRSG-091 1605251351102527 2016/05/18 00:00:00"
+[1] "NOT USED LA_INTS-004 1605261509201092 2016/05/17 00:00:00"
+[1] "NOT USED LA_INTS-013 1606211649493756 2016/06/16 00:00:00"
+[1] "NOT USED LA_INTS-016 1609191125062328 2016/06/30 00:00:00"
+[1] "NOT USED LA_INTS-017 1609190842322666 2016/06/29 00:00:00"
+[1] "NOT USED LA_GRSG-1031 NA 20170603"
+[1] "NOT USED LA_GRSG-1035 NA 20170522"
+[1] "NOT USED LA_UPSH-1210 NA 20170603"
+[1] "LV STRATUM ERROR/Forest and Other/Forest and Woodland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Shrubland"
+[1] "LV STRATUM ERROR/GRSG Seasonal Habitat/Upland Savannah-Shrub Steppe"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/GRSG Seasonal Habitat"
+[1] "LV STRATUM ERROR/Upland Savannah-Shrub Steppe/Forest and Woodland"
+Warning messages:
+1: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+2: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+3: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+4: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+5: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+6: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+7: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+8: In rgdal::writeOGR(obj = spdf, dsn = temp.directory, layer = "inshape",  :
+  Field names abbreviated for ESRI Shapefile driver
+>  q()
+> proc.time()
+   user  system elapsed 
+ 189.56   11.18  312.12 
