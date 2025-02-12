@@ -1,0 +1,1051 @@
+---
+title: "Jim Sage HAF - Summer"
+author: "Alex Traynor"
+date: "1/26/2021"
+output: html_document
+---
+
+
+### Setup
+Set local library path and load required packages
+```{r setup, eval = TRUE}
+library(aim.analysis)
+library(sp)
+library(dplyr)
+library(binom)
+library(stringr)
+library(readxl)
+
+`%notin%` <- Negate(`%in%`)
+```
+
+### Defaults, filepaths, and filenames
+
+```{r}
+# Projection to use. Alber's Equal Area is useful for calculating areas
+projection <- sp::CRS("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs")
+
+# Date of analysis
+date <- Sys.Date()
+
+# Confidence level in percent
+confidence <- 80
+
+output_path <- "C:\\Users\\alaurencetraynor\\Documents\\2021\\Analysis\\ID\\Jim Sage HAF\\outputs\\"
+
+# Filename for ratings from analysis requestor
+ratings_filename <- "HAF_ID_2020_JimSage_SiteScale_RESULTS_01-19-2021.xlsx"
+
+# Core filename for all outputs
+output_filename <- "JimSage_winter"
+
+# Reporting Unit name - corresponds to column name in ratings spreadsheet
+sua_name <- "Suitability_Winter_S6"
+
+# Habitat type (corresponds to sheet name in ratings Excel workbook)
+seasonal_habitat_type = "Winter"
+
+ratings_sheet_name = "Plot Summary"
+
+# The variable in AIM sample designs that contains the unique identifier for each point
+aim_idvar <- "PLOT_NM"
+
+# The variable in AIM sample designs that contains the fate for each point
+aim_fatevar = "FINAL_DESIG"
+# The variable in TerrADat that contains the unique identifier for each point matching AIM designs'
+tdat_idvar <- "PlotID" # these dont quite match up with the desing points - some plots are only numbers without the prefix
+# The variable in LMF points that contains the unique identifier for each point
+lmf_idvar <- "PLOTKEY"
+# The variable in the ratings spreadsheet corresponding to plot id 
+ratings_idvar <- "Plot_ID"
+
+# The fates in sample designs which correspond to sampled/observed
+observed_fates = c("TS", "Target Sampled", "Sampled")
+
+# The fates in sample designs which correspond to unneeded
+# (e.g. unused oversample or points designated for future sampling)
+invalid_fates = c("NN", NA, "Non Needed", "", "Not Sampled", "NT", "NotEval")
+
+# The variable containing the LMF segment identity/membership
+# This is found in the points and the segment polygons
+segment_var <- "segment_id"
+
+# The variable that contains the areas in HECTARES in wgtcats
+# This is calculated in ArcMap
+wgtcat_area_var = "area_hectares"
+
+# The unique ID for poststratification polygons
+wgtcats_var <- "wgtcat"
+
+### The filepath to the folder where we have all the spatial data
+path_spatial <- "C:\\Users\\alaurencetraynor\\Documents\\2021\\Analysis\\ID\\Jim Sage HAF\\inputs\\spatial\\"
+
+# The geidatabase containing all the spatial files
+analysis_gdb <- "Jim Sage Allotment HAF.gdb"
+
+### The filepath to the folder where we have the Excel stuff
+path_tabular <- "C:\\Users\\alaurencetraynor\\Documents\\2021\\Analysis\\ID\\Jim Sage HAF\\inputs\\"
+
+### Spatial file names
+# name of postratification file for this reporting unit
+strata <- "strata_UpperRaftRiverValley_Winter_S6SeasonalHabitat"
+
+# name of sampled terradat points file in analysis gdb
+terradat_file <- "td_UpperRaftRiverValley_Winter_S6SeasonalHabitat"
+
+# name of sampled lmf points file in analysis gdb
+lmf_file <- "lmf_UpperRaftRiverValley_Winter_S6SeasonalHabitat"
+
+# name of design points file in analysis gdb
+design_file <- "design_UpperRaftRiverValley_Winter_S6SeasonalHabitat"
+
+# variables in points describing the area ratio of lmf segments
+lmf_area_var <- "area_ratio"
+
+# name/description of weight categories in wgtcat shapefile
+wgtcat_name <- "strata"
+```
+
+### Read in
+#### Reporting unit(s)
+Strata and points are already clipped to reporting units in Arc
+
+#### Strata polygons
+```{r}
+wgtcat_df <-sf::st_read(dsn = paste(path_spatial, analysis_gdb, sep = "/"),
+                        layer = strata,
+                        stringsAsFactors = FALSE)
+
+# Make Spatial version for wgtcat summary output
+wgtcat_spdf <- sf::st_transform(wgtcat_df,
+                                crs = projection)
+
+wgtcat_spdf <- sf::st_zm(wgtcat_df,
+                            drop = TRUE,
+                            what = "ZM") # simplify becuase theres Z/M values
+
+wgtcat_spdf <- methods::as(wgtcat_df, "Spatial")
+
+# Non-spatial for weight calcs
+sf::st_geometry(wgtcat_df) <- NULL
+wgtcats <- as.data.frame(wgtcat_df)
+
+wgtcats[["wgtcat"]] <-  as.character(wgtcats[[wgtcats_var]])
+wgtcats["wgtcat_name"] <- wgtcats[[wgtcat_name]]
+wgtcats[["area_hectares"]] <- wgtcats[[wgtcat_area_var]]
+
+wgtcats <- wgtcats[,c("wgtcat","wgtcat_name","area_hectares")]
+```
+
+#### Plot Ratings
+```{r}
+ratings <- readxl::read_excel(path = paste0(path_tabular, ratings_filename),
+                             sheet = ratings_sheet_name) ## getting an error here based on column types so adding this in explicitly
+
+# removing any NAs and unrated plots:
+ratings <- ratings[!is.na(ratings[[sua_name]]),]
+```
+
+#### Sampled Points 
+Make sure points and polygons do not include Z/M dimensions...
+```{r}
+sampled_points <- sf::st_read(dsn = paste(path_spatial, analysis_gdb, sep = "/"),
+                           layer = terradat_file,
+                           stringsAsFactors = FALSE)
+## Standardize projection
+sampled_points <- sf::st_transform(sampled_points,
+                                crs = projection)
+
+sampled_points <- sf::st_zm(sampled_points,
+                            drop = TRUE,
+                            what = "ZM") # simplify becuase theres Z/M values
+
+## Make spatial 
+sampled_points <- methods::as(sampled_points, "Spatial")
+
+## standardise wgtcat variable name
+sampled_points@data[["wgtcat"]] <- sampled_points@data[[wgtcats_var]]
+
+## repeat for lmf points
+lmf_points <- sf::st_read(dsn = paste(path_spatial, analysis_gdb, sep = "/"),
+                           layer = lmf_file,
+                           stringsAsFactors = FALSE)
+## Standardize projection
+lmf_points <- sf::st_transform(lmf_points,
+                                crs = projection)
+
+lmf_points <- sf::st_zm(lmf_points,
+                            drop = TRUE,
+                            what = "ZM") # simplify becuase theres Z/M values
+
+## Make spatial 
+lmf_points <- methods::as(lmf_points, "Spatial")
+```
+
+#### Design points
+```{r}
+### add design points
+design_points <- sf::st_read(dsn = paste(path_spatial, analysis_gdb, sep = "/"),
+                           layer = design_file,
+                           stringsAsFactors = FALSE)
+## Standardize projection
+design_points <- sf::st_transform(design_points,
+                                crs = projection)
+
+design_points <- sf::st_zm(design_points,
+                            drop = TRUE,
+                            what = "ZM") # simplify becuase theres Z/M values
+
+## Make spatial 
+design_points <- methods::as(design_points, "Spatial")
+
+```
+
+###### Sort out points ######
+#### Prepare TerrADat points
+```{r}
+### Make naming consistent across all data
+# Move unique IDs to unique_id in TerrADat
+sampled_points@data[["unique_id"]] <- sampled_points@data[[tdat_idvar]]
+# Set fate variable in TerrADat
+sampled_points@data[["fate"]] <- observed_fates[1]
+# Move LMF segment membership to segment
+sampled_points@data[["segment"]] <- sampled_points@data[[segment_var]]
+
+sampled_points@data[["area_ratio"]] <- sampled_points@data[[lmf_area_var]]
+
+sampled_points@data <- sampled_points@data[,c("unique_id", "fate","wgtcat","segment", "area_ratio")]
+
+# repeat for LMF
+lmf_points@data[["unique_id"]] <- lmf_points@data[[lmf_idvar]]
+lmf_points@data[["fate"]] <- observed_fates[1]
+lmf_points@data[["wgtcat"]] <- lmf_points@data[[wgtcats_var]]
+lmf_points@data[["segment"]] <- lmf_points@data[[segment_var]]
+lmf_points@data[["area_ratio"]] <- lmf_points@data[[lmf_area_var]]
+lmf_points@data <- lmf_points@data[,c("unique_id", "fate","wgtcat","segment", "area_ratio")]
+
+# repeat for all points
+design_points@data[["unique_id"]] <- design_points@data[[aim_idvar]]
+design_points@data[["fate"]] <- design_points@data[[aim_fatevar]]
+design_points@data[["wgtcat"]] <- design_points@data[[wgtcats_var]]
+design_points@data[["segment"]] <- design_points@data[[segment_var]]
+design_points@data[["area_ratio"]] <- design_points@data[[lmf_area_var]]
+design_points@data <- design_points@data[,c("unique_id", "fate","wgtcat","segment", "area_ratio")]
+```
+
+#### Create combined points shapefile
+### Combine all sample design points
+```{r}
+### Mash the design files together, keeping only necessary variables
+sum(sampled_points$unique_id %in% design_points$unique_id)
+sum(design_points$unique_id[design_points$fate %in% observed_fates] %in% sampled_points$unique_id)
+
+sampled_points[sampled_points$unique_id %notin% design_points$unique_id,] # only LMF
+
+design_points$unique_id[design_points$fate %in% observed_fates] %notin% sampled_points$unique_id
+
+## merge lmf and aim for ratings check
+sampled_points <- rbind(sampled_points,lmf_points)
+```
+### QC
+```{r}
+# Checking against the ratings confirms if all the rated plots are represented (important)
+
+if (!all(ratings[[ratings_idvar]] %in% sampled_points$unique_id)) {
+  warning("NOT ALL RATED AIM/LMF PLOTS ARE PRESENT IN sampled_points!")
+}
+# and if all the sampled_plots are rated (not important, but informative)
+all(sampled_points$unique_id %in% ratings[[ratings_idvar]])
+
+# filter sampled plots by those that were rated:
+sampled_points <- sampled_points[sampled_points$unique_id %in% ratings[[ratings_idvar]], ]
+
+# There one extra point here form the salt lake desing also named site 01 - in wgtcat 17 - this wasnt rated so lets remove
+sampled_points <- sampled_points[!is.na(sampled_points$wgtcat),]
+```
+# Now combine:
+# All design_points which were not observed. This removes any points that overlap with sampled_points but also
+# any that were observed but somehow not in TerrADat and deemed unsuitable for rating
+# which therefore means they also should not be included in weighting
+# All sampled points (already restricted to the ones which were rated)
+
+```{r}
+aim_points <- rbind(design_points[!(design_points$fate %in% observed_fates),],sampled_points)
+
+# Take out invalid fates, e.g. things that don't get included in weighting
+aim_points <- aim_points[!(aim_points$fate %in% invalid_fates),]
+
+
+# Add in coordinates (needed for the analysis step)
+aim_points <-  aim.analysis::add_coords(aim_points,
+                                        xynames = c("x", "y"))
+
+aim_points$wgtcat <- as.character(aim_points$wgtcat) 
+
+# separate out lmf point for code below
+# winter has an AIM point: "201" so nedd to amend this code
+lmf_points <- aim_points
+lmf_points <- subset(lmf_points, grepl("^[0-9]{14}|^[0-9]{13}",lmf_points@data$unique_id))
+
+aim_points <- subset(aim_points, !grepl("^[0-9]{14}|^[0-9]{13}",aim_points@data$unique_id))
+
+# theres 2 LMF points that are not on BLM land here: 20141631104808B1, 20141631104808B2 need  to remove these
+lmf_points <- lmf_points[lmf_points$unique_id != "20141631104808B1" & lmf_points$unique_id != "20141631104808B2",]
+```
+
+###### Analyze ######
+############################################################
+#### Calculate weights ####
+### Note that this is the contents of aim.analysis::weight_aimlmf() verbatim
+### As a function, it was producing errors that it does not as bare code
+############################################################
+
+This functions is giving errors:
+aim.analysis::weight_aimlmf(aim_points = aim_points,
+                            lmf_points = lmf_points,
+                            aim_idvar <- "unique_id",
+                            lmf_idvar <- "unique_id",
+                            aim_fatevar <- "fate",
+                            wgtcat_var <- "wgtcat",
+                            segments <- NULL,
+                            segment_var <- "segment",
+                            verbose <- FALSE)
+Using raw code instead:                     
+```{r}
+# These are being redefined here as though they were arguments to the function
+aim_points = aim_points
+lmf_points = lmf_points
+aim_idvar <- "unique_id"
+lmf_idvar <- "unique_id"
+aim_fatevar <- "fate"
+wgtcat_var <- "wgtcat"
+segments <- NULL
+segment_var <- "segment"
+verbose <- FALSE
+
+if (length(wgtcat_var) != 1 | class(wgtcat_var) != "character") {
+  stop("wgtcat_var must be a single character string")
+}
+if (!is.null(wgtcat_area_var)) {
+  if (length(wgtcat_area_var) != 1 | class(wgtcat_area_var) != "character") {
+    stop("wgtcat_area_var must be a single character string")
+  }
+}
+if (length(segment_var) != 1 | class(segment_var) != "character") {
+  stop("segment_var must be a single character string")
+}
+
+if (!is.null(wgtcats)) {
+  if (!(class(wgtcats) %in% c("SpatialPolygonsDataFrame", "data.frame"))) {
+    stop("wgtcats must be a spatial polygons data frame or data frame")
+  }
+  if (nrow(wgtcats) < 1) {
+    stop("wgtcats contains no observations/data")
+  }
+  if (!(wgtcat_var %in% names(wgtcats))) {
+    stop(paste("The variable", wgtcat_var, "does not appear in wgtcats@data"))
+  }
+}
+
+if (!is.null(segments)) {
+  if (!(class(segments) %in% "SpatialPolygonsDataFrame")) {
+    stop("segments must be a spatial polygons data frame")
+  }
+  if (nrow(segments) < 1) {
+    stop("segments contains no observations/data")
+  }
+  if (!(segment_var %in% names(segments))) {
+    stop(paste("The variable", segment_var, "does not appear in segments@data"))
+  }
+}
+
+if (is.null(aim_fatevar)) {
+  warning("No fate variable specified for AIM points. Assuming all were observed/sampled.")
+  aim_fatevar <- "fate"
+  aim_points[["fate"]] <- "observed"
+  lmf_points[["fate"]] <- "observed"
+  observed_fates <- "observed"
+} else {
+  if (length(aim_fatevar) > 1 | class(aim_fatevar) != "character") {
+    stop("The aim fate variable must be a single character string")
+  }
+  if (!aim_fatevar %in% names(aim_points)) {
+    stop(paste("The variable", aim_fatevar, "does not appear in aim_points@data"))
+  } else {
+    aim_points[["fate"]] <- aim_points[[aim_fatevar]]
+  }
+  if (is.null(observed_fates)) {
+    warning("No observed fates provided. Assuming all AIM points were observed/sampled unless specified otherwise with invalid_fates")
+    observed_fates <- unique(aim_points[["fate"]])
+    observed_fates <- observed_fates[!(observed_fates %in% invalid_fates)]
+  }
+}
+
+lmf_points[["fate"]] <- observed_fates[1]
+
+if (!is.null(observed_fates)) {
+  if (!any(aim_points[["fate"]] %in% observed_fates)) {
+    warning("No AIM points have a fate specified as observed.")
+  }
+}
+
+# Harmonize projections
+if (is.null(projection)) {
+  if (!is.null(wgtcats)) {
+    projection <- wgtcats@proj4string
+  } else if (!is.null(segments)) {
+    projection <- segments@proj4string
+  }
+}
+
+if (!is.null(projection)) {
+  if (class(aim_points) %in% c("SpatialPointsDataFrame")) {
+    if (!identical(projection, aim_points@proj4string)) {
+      aim_points <- sp::spTransform(aim_points,
+                                    CRSobj = projection)
+    }
+  }
+  if (class(lmf_points) %in% c("SpatialPointsDataFrame")) {
+    if (!identical(projection, lmf_points@proj4string)) {
+      lmf_points <- sp::spTransform(lmf_points,
+                                    CRSobj = projection)
+    }
+  }
+  if (!is.null(wgtcats)) {
+    if (class(lmf_points) %in% c("SpatialPolygonsDataFrame")) {
+      if (!identical(projection, wgtcats)) {
+        wgtcats <- sp::spTransform(wgtcats,
+                                   CRSobj = projection)
+      }
+    }
+  }
+  if (!is.null(segments)) {
+    if (!identical(projection, segments@proj4string)) {
+      segments <- sp::spTransform(segments,
+                                  CRSobj = projection)
+    }
+  }
+}
+
+
+
+# Assign the weight categories
+if (class(wgtcats) %in% "SpatialPolygonsDataFrame") {
+  if (!(wgtcat_var %in% names(wgtcats))) {
+    stop("The variable ", wgtcat_var, " does not appear in wgtcats")
+  }
+  aim_points[["wgtcat"]] <- sp::over(aim_points, wgtcats)[[wgtcat_var]]
+  lmf_points[["wgtcat"]] <- sp::over(lmf_points, wgtcats)[[wgtcat_var]]
+} else {
+  if (!(wgtcat_var %in% names(aim_points))) {
+    stop("The variable ", wgtcat_var, " does not appear in aim_points")
+  }
+  if (!(wgtcat_var %in% names(lmf_points))) {
+    stop("The variable ", wgtcat_var, " does not appear in lmf_points")
+  }
+  aim_points[["wgtcat"]] <- aim_points[[wgtcat_var]]
+  lmf_points[["wgtcat"]] <- lmf_points[[wgtcat_var]]
+}
+
+
+# Assign the LMF segment codes
+if (is.null(segments)) {
+  if (!(segment_var %in% names(aim_points))) {
+    stop("The variable ", segment_var, " does not appear in aim_points")
+  }
+  if (!(segment_var %in% names(lmf_points))) {
+    stop("The variable ", segment_var, " does not appear in lmf_points")
+  }
+  aim_points[["segment"]] <- aim_points[[segment_var]]
+  lmf_points[["segment"]] <- lmf_points[[segment_var]]
+} else {
+  if (!(segment_var %in% names(segments))) {
+    stop("The variable ", segment_var, " does not appear in segments")
+  }
+  aim_points[["segment"]] <- sp::over(aim_points, segments)[[segment_var]]
+  lmf_points[["segment"]] <- sp::over(lmf_points, segments)[[segment_var]]
+}
+
+# Just harmonize the idvar names for now
+aim_points[["unique_id"]] <- aim_points[[aim_idvar]]
+lmf_points[["unique_id"]] <- lmf_points[[lmf_idvar]]
+
+# Add reporting units
+aim_points[["reporting_unit"]] <- seasonal_habitat_type
+lmf_points[["reporting_unit"]] <- seasonal_habitat_type
+
+# If somehow LMF points aren't in a segment, that's a major problem
+if (any(is.na(lmf_points[["segment"]]))) {
+  stop(paste("The following LMF points did not spatially intersect any segment polygons:",
+             paste(lmf_points[is.na(lmf_points[["segment"]]), "unique_id"], collapse = ", ")))
+}
+
+# TODO: Stick a check in here that the segment ID from the polygons
+# matches the one derived from the LMF plot ID
+# Probably just warn if not?
+
+
+# Get data frames
+if (class(aim_points) %in% "SpatialPointsDataFrame") {
+  aim_df <- aim_points@data
+} else {
+  aim_df <- aim_points
+}
+if (class(lmf_points) %in% "SpatialPointsDataFrame") {
+  lmf_df <- lmf_points@data
+} else {
+  lmf_df <- lmf_points
+}
+
+# NOTE THAT THIS FILTERS OUT ANYTHING FLAGGED AS NOT NEEDED IN THE FATE
+# So that'd be unused oversamples or points from the FUTURE that no one would've sampled anyway
+aim_df <- aim_df[!(aim_df[["fate"]] %in% invalid_fates), c("unique_id", "fate", "wgtcat", "segment", "area_ratio")]
+aim_df[["aim"]] <- TRUE
+aim_df[["lmf"]] <- FALSE
+
+# We only have target sampled LMF points available to us, so we don't need to filter them
+lmf_df <- lmf_df[, c("unique_id", "fate", "wgtcat", "segment", "area_ratio")]
+lmf_df[["aim"]] <- FALSE
+lmf_df[["lmf"]] <- TRUE
+
+# Combine them
+combined_df <- unique(rbind(aim_df, lmf_df))
+
+# There shouldn't be any that don't belong to a wgtcat anymore
+combined_df <- combined_df[!is.na(combined_df[["wgtcat"]]), ]
+
+# Add an observed variable for easy reference later
+combined_df[["observed"]] <- combined_df[["fate"]] %in% observed_fates
+
+# To make the lookup table, drop any points that fell outside LMF segments
+combined_segmentsonly_df <- combined_df[!is.na(combined_df[["segment"]]), ]
+
+# Create a segment relative weight lookup table
+segment_relwgt_lut <- do.call(rbind,
+                              lapply(X = split(combined_segmentsonly_df, combined_segmentsonly_df[["segment"]]),
+                                     FUN = function(X){
+                                       # These are the count of AIM points with any valid fate
+                                       aim_count <- sum(X[["aim"]])
+                                       
+                                       # We also need the count of LMF points with any valid fate, but that's complicated
+                                       # We only have the sampled LMF points so we can count those
+                                       lmf_sampled_count <- sum(X[["lmf"]])
+                                       # To get the number of evaluated but not sampled points:
+                                       # The LMF plot keys end in a digit that represents the intended sampling order within a segment
+                                       # 1 and 2 are considered base points and were intended to be sampled
+                                       # If a sampled LMF plot's plot key ends in 3, that means that one or both of the base points
+                                       # were evaluated and rejected rather than sampled, which brings the evaluated LMF plot count
+                                       # to three for the segment.
+                                       # This just asks if the third point was used
+                                       lmf_oversample_used <- any(grepl(X[["unique_id"]][X[["lmf"]]],
+                                                                        pattern = "\\D3$"))
+                                       
+                                       # Likewise, if only one LMF plot was sampled in a segment, that means the other two were
+                                       # evalurated and rejected rather than sampled, also bringing the total to three.
+                                       # So if there was only one sampled or if the oversample was used, there were three evaluated
+                                       if (sum(X[["lmf"]]) == 1 | lmf_oversample_used) {
+                                         lmf_count <- 3
+                                       } else {
+                                         # This will fire only if there sampled count was 2, but better to be safe here
+                                         lmf_count <- lmf_sampled_count
+                                       }
+                                       
+                                       
+                                       # The relative weight for points falling within a segment is calculated as
+                                       # 1 / (number of points)
+                                       relative_weight <- 1 / sum(aim_count, lmf_count)
+                                       
+                                       output <- data.frame("segment" = X[["segment"]][1],
+                                                            "relwgt" = relative_weight,
+                                                            stringsAsFactors = FALSE)
+                                       return(output)
+                                     }))
+
+# Add the relative weights to the combined AIM and LMF points
+combined_df <- merge(x = combined_df,
+                     y = segment_relwgt_lut,
+                     by = "segment",
+                     all.x = TRUE)
+
+# adjust relwgt based on area of lmf segment:
+combined_df <- combined_df %>% mutate(area_ratio = round(area_ratio, digits = 3)) %>%
+                               mutate(relwgt = relwgt * area_ratio)
+
+# Anywhere there's an NA associated with an AIM point, that's just one that fell outside the segments
+combined_df[is.na(combined_df[["relwgt"]]) & combined_df[["aim"]], "relwgt"] <- 1
+
+if (is.null(wgtcat_area_var)) {
+  if (class(wgtcats) %in% "SpatialPolygonsDataFrame") {
+    wgtcat_df <- aim.analysis::add.area(wgtcats)@data
+  } else {
+    stop("No name for a variable in wgtcats containing the area in hectares was provided and wgtcats is not a spatial polygons data frame so area can't be calculated")
+  }
+} else {
+  if (!(wgtcat_area_var %in% names(wgtcats))) {
+    if (class(wgtcats) %in% "SpatialPolygonsDataFrame") {
+      wgtcat_df <- aim.analysis::add.area(wgtcats)@data
+    } else {
+      stop("The variable ", wgtcat_area_var, " does not appear in wgtcats")
+    }
+  } else {
+    warning("Trusting that the variable ", wgtcat_area_var, " in wgtcats contains the areas in hectares")
+    if (class(wgtcats) %in% "SpatialPolygonsDataFrame") {
+      wgtcat_df <- wgtcats@data
+      wgtcat_df[["AREA.HA"]] <- wgtcat_df[[wgtcat_area_var]]
+    } else {
+      wgtcat_df <- wgtcats
+      wgtcat_df[["AREA.HA"]] <- wgtcat_df[[wgtcat_area_var]]
+    }
+  }
+}
+
+
+wgtcat_df[["wgtcat"]] <- wgtcat_df[[wgtcat_var]]
+
+# Making sure that these aren't spread out over multiple observations
+if (verbose) {
+  message("Summarizing wgtcat_df by wgtcat to calculate areas in case the wgtcats are split into multiple observations")
+}
+wgtcat_df <- dplyr::summarize(dplyr::group_by(wgtcat_df,
+                                              wgtcat),
+                              "hectares" = sum(AREA.HA))
+
+wgtcat_areas <- setNames(wgtcat_df[["hectares"]], wgtcat_df[["wgtcat"]])
+
+# had a issue here reading wgtcats as integers
+wgtcat_df$wgtcat <-  as.character(wgtcat_df$wgtcat)
+  
+weight_info <- lapply(X = wgtcat_df[["wgtcat"]],
+                      wgtcat_areas = wgtcat_areas,
+                      points = combined_df,
+                      wgtcat_var = wgtcat_var,
+                      FUN = function(X, wgtcat_areas, points, wgtcat_var){
+                        # Area of this polygon
+                        area <- wgtcat_areas[X]
+                        
+                        # All of the points (AIM and LMF) falling in this polygon
+                        points <- points[points[["wgtcat"]] == X, ]
+                        
+                        # If there are in fact points, do some weight calculations!
+                        if (nrow(points) > 0 & any(points[["observed"]])) {
+                          # The number of observed AIM points with a relative weight of 1
+                          # So, not sharing an LMF segment with any LMF points
+                          aim_standalone <- sum(combined_df[["aim"]] & combined_df[["relwgt"]] == 1)
+                          # The number of unique segments selected for LMF points
+                          lmf_segment_count <- length(unique(points[["segment"]]))
+                          
+                          # The approximate number of 160 acre segments in this polygon
+                          # Obviously, not all of the segments were selected in the first stage
+                          # of the LMF design, but this is how many were available in this polygon
+                          approximate_segment_count <- area / (160 / 2.47)
+                          
+                          # This is the sum of the relative weights of the OBSERVED points
+                          # This does not include the inaccessible, rejected, or unknown points
+                          # It does include both AIM and LMF, however
+                          sum_observed_relwgts <- sum(points[points[["observed"]], "relwgt"])
+                          # This is the sum of the relative weights of all the AIM points, regardless of fate
+                          sum_relwgts <- sum(points[["relwgt"]])
+                          
+                          # The units are segments per point
+                          # The segments are 120 acre quads (quarter sections?) that the first stage of LMF picked from
+                          # Steve Garman called this "ConWgt" which I've expanded to conditional_weight
+                          # but that's just a guess at what "con" was short for
+                          conditional_weight <- approximate_segment_count / (aim_standalone + lmf_segment_count)
+                          conditional_area <- conditional_weight * sum_observed_relwgts
+                          
+                          # What's the observed proportion of the area?
+                          observed_proportion <- sum_observed_relwgts / sum_relwgts
+                          # And how many acres is that then?
+                          # We can derive the "unknown" or "unsampled" area as the difference
+                          # between the polygon area and the observed area
+                          observed_area <- area * observed_proportion
+                          
+                          # Then this adjustment value is calculated
+                          weight_adjustment <- observed_area / conditional_area
+                          
+                          
+                          
+                          # Put everything about the wgtcat in general in one output data frame
+                          output_wgtcat <- data.frame(wgtcat = X,
+                                                      area = area,
+                                                      area_units = "hectares",
+                                                      approximate_segment_count = approximate_segment_count,
+                                                      sum_observed_relwgts = sum_observed_relwgts,
+                                                      sum_relwgts = sum_relwgts,
+                                                      observed_proportion = observed_proportion,
+                                                      observed_area = observed_area,
+                                                      unobserved_area = area - observed_area,
+                                                      conditional_weight = conditional_weight,
+                                                      conditional_area = conditional_area,
+                                                      weight_adjustment = weight_adjustment,
+                                                      point_count = sum(points[["observed"]]),
+                                                      observed_point_count = nrow(points),
+                                                      stringsAsFactors = FALSE)
+                          
+                          # But much more importantly add the calculated weights to the points
+                          output_points <- points
+                          
+                          # This handles situations where there were points, but none of them were observed
+                          # In that case, weight_adjustment will be 0 / 0 = NaN
+                          # That's fine because we can identify that this polygon is still in the inference area
+                          # but that its entire area is "unknown" because no data were in it
+                          if (is.nan(weight_adjustment)) {
+                            output_points[["wgt"]] <- NA
+                          } else {
+                            # The point weight is calculated here.
+                            # This is Garman's formula and I don't have the documentation justifying it on hand
+                            output_points[["wgt"]] <- weight_adjustment * conditional_weight * points[["relwgt"]]
+                            message("Checking weight sum for ", X)
+                            # I'm rounding here because at unrealistically high levels of precision it gets weird and can give false positives
+                            if (round(sum(output_points[["wgt"]]), digits = 3) != round(area, digits = 3)) {
+                              warning("The sum of the point weights (", sum(output_points[["wgt"]]), ") does not equal the polygon area (", area, ") for ", X)
+                            }
+                          }
+                          
+                        } else {
+                          # Basically just empty data frames
+                          output_wgtcat <- data.frame(wgtcat = X,
+                                                      area = area,
+                                                      area_units = "hectares",
+                                                      approximate_segment_count = area / (160 / 2.47),
+                                                      sum_observed_relwgts = NA,
+                                                      sum_relwgts = NA,
+                                                      observed_proportion = 0,
+                                                      observed_area = 0,
+                                                      unobserved_area = area,
+                                                      conditional_weight = NA,
+                                                      conditional_area = NA,
+                                                      weight_adjustment = NA,
+                                                      point_count = 0,
+                                                      observed_point_count = 0,
+                                                      stringsAsFactors = FALSE)
+                          output_points <- NULL
+                        }
+                        
+                        return(list(points = output_points,
+                                    wgtcat = output_wgtcat))
+                      })
+
+point_weights <- do.call(rbind,
+                         lapply(X = weight_info,
+                                FUN = function(X){
+                                  X[["points"]]
+                                }))
+wgtcat_summary <- do.call(rbind,
+                          lapply(X = weight_info,
+                                 FUN = function(X){
+                                   X[["wgtcat"]]
+                                 }))
+
+```
+
+###### Analysis ######
+```{r}
+all_points <- rbind(aim_points[, c("unique_id", "x", "y")],
+                    lmf_points[, c("unique_id", "x", "y")])
+
+# Add the ratings to the point info and convert to a data frame
+all_points <- merge(x = all_points@data,
+                    y = ratings,
+                    by.x = "unique_id",
+                    by.y = ratings_idvar,
+                    all.x = TRUE)
+
+# Add in the indicator, which for these will always be "Habitat suitability"
+all_points[["indicator"]] <- "Habitat suitability"
+all_points[[sua_name]] <- as.character(all_points[[sua_name]])
+
+# Add in the season (this is defined up above) e.g. "S-4 Upland Summer Late Brood-rearing Habitat"
+all_points[["reporting_unit"]] <- seasonal_habitat_type
+point_weights[["reporting_unit"]] <- seasonal_habitat_type
+
+# And analyze
+analysis <- aim.analysis::analyze(benchmarked_points = all_points,
+                                  point_weights = point_weights,
+                                  id_var = "unique_id",
+                                  indicator_var = "indicator",
+                                  value_var = sua_name,
+                                  x_var = "x",
+                                  y_var = "y",
+                                  reporting_var = "reporting_unit",
+                                  weight_var = "wgt",
+                                  conf = confidence)
+```
+
+### Confidence Interval Function
+
+```{r}
+goodman_cis <- function(counts,
+                        alpha = 0.2,
+                        chisq = "best",
+                        verbose = FALSE){
+  
+  if (!(chisq %in% c("A", "B", "best"))) {
+    stop("The only valid values for chisq are 'A', 'B', and 'best'.")
+  }
+  
+  # Goodman describes the upper and lower bounds with the equations:
+  # Lower estimated pi_i = {A + 2n_i - {A[A + 4n_i(N - n_i) / N]}^0.5} / [2(N + A)]
+  # Upper estimated pi_i = {A + 2n_i + {A[A + 4n_i(N - n_i) / N]}^0.5} / [2(N + A)]
+  
+  # n_i is the "observed cell frequencies in population of size N" (aka count of observations) from a category
+  # so that's the incoming argument counts. We'll rename for consistency with the original math (and statistics as a discipline)
+  n <- counts
+  
+  # N is the population those counts make up, or, in lay terms, the total observation count
+  N <- sum(counts)
+  
+  # k is the number of categories the population has been sorted into
+  # Useful for degrees of freedom
+  k <- length(counts)
+  
+  # "A is the upper alpha * 100-th percentage point of the chi-square distribution with k - 1 degrees of freedom"
+  # and B is an alternative which uses alpha / k and one degree of freedom
+  # Goodman states that B should be less than A for situations
+  # where k > 2 AND alpha is 0.1, 0.05, or 0.01.
+  chisq_quantiles <- c("A" = stats::qchisq(p = 1 - alpha,
+                                           df = k - 1),
+                       "B" = stats::qchisq(p = 1 - (alpha / k),
+                                           df = 1))
+  
+  
+  # According to Goodman, A and B are both valid options for the chi-square quantile
+  # So the user can specify which they want or just ask for the one that minimizes the confidence intervals
+  chisq_quantile <- switch(chisq,
+                           "A" = {chisq_quantiles["A"]},
+                           "B" = {chisq_quantiles["B"]},
+                           "best" = {
+                             pick <- which.min(chisq_quantiles)
+                             if (verbose){
+                               switch(names(chisq_quantiles)[pick],
+                                      "A" = message("The chi-square quantile calculation that will provide the tighter confidence intervals is A, the upper alpha X 100-th percentage point of the chi-square distribution with k - 1 degrees of freedom"),
+                                      "B" = message("The chi-square quantile calculation that will provide the tighter confidence intervals is B, the upper alpha / k X 100-th percentage point of the chi-square distribution with 1 degree of freedom"))
+                             }
+                             chisq_quantiles[pick]
+                           })
+  
+  # Calculate the bounds!
+  # Note that these ARE symmetrical, just not around the proportions.
+  # They're symmetrical around chisq_quantile + 2 * n / (2 * (N + chisq_quantile))
+  # The variable A has been replaced with chisq_quantile because it may be A or B, depending
+  # Since the only multi-value vector involved here is n, these will be vectors of length k,
+  # having one value for each of the values in n and in the same order as n
+  lower_bounds <- (chisq_quantile + 2 * n - sqrt(chisq_quantile * (chisq_quantile + 4 * n * (N - n) / N))) / (2 * (N + chisq_quantile))
+  upper_bounds <- (chisq_quantile + 2 * n + sqrt(chisq_quantile * (chisq_quantile + 4 * n * (N - n) / N))) / (2 * (N + chisq_quantile))
+  
+  # A proportion can never be greater than 1 or less than 0 (duh)
+  # That's definitely a thing that can happen if the magnitude of sqrt(chisq_quantile * (chisq_quantile + 4 * n * (N - n) / N))
+  # is large enough
+  lower_bounds[lower_bounds < 0] <- 0
+  upper_bounds[upper_bounds > 1] <- 1
+  
+  # Build the output
+  output <- data.frame(count = n,
+                       proportion = n / N,
+                       lower_bound = lower_bounds,
+                       upper_bound = upper_bounds)
+  
+  # What are the categories called? If anything, that is
+  k_names <- names(n)
+  
+  if (!is.null(k_names)) {
+    output[["category"]] <- k_names
+    output <- output[, c("category", "count", "proportion", "lower_bound", "upper_bound")]
+  }
+  
+  return(output)
+}
+
+```
+
+### Formatting Outputs
+```{r}
+analysis <- analysis[, c("Subpopulation",
+                         "Indicator",
+                         "Category",
+                         "NResp",
+                         "Estimate.P",
+                         "Estimate.U")]
+
+adjusted_counts <- (sum(analysis[["NResp"]][analysis[["Category"]] != "Total"]) * analysis[["Estimate.P"]][analysis[["Category"]] != "Total"] / 100)
+
+goodman_cis <- goodman_cis(counts = adjusted_counts)
+
+goodman_cis[["Category"]] <- analysis[["Category"]][analysis[["Category"]] != "Total"]
+
+analysis <- merge(x = analysis,
+                  y = goodman_cis[, c("Category", "lower_bound", "upper_bound")])
+
+analysis[["lower_bound"]] <- analysis[["lower_bound"]] * 100
+analysis[["upper_bound"]] <- analysis[["upper_bound"]] * 100
+
+# Calculate the hectares using the Goodman binomial confidence intervals from percentage
+total_hectares <- analysis[["Estimate.U"]]/(analysis[["Estimate.P"]]/100)
+  
+analysis[[paste0("LCB", confidence, "Pct.U.Goodman")]] <- analysis[["lower_bound"]] / 100 * total_hectares
+analysis[[paste0("UCB", confidence, "Pct.U.Goodman")]] <- analysis[["upper_bound"]] / 100 * total_hectares
+
+names(analysis) <- c("Rating",
+                     "Habitat Type",
+                     "Indicator",
+                     "Number of plots",
+                     "Estimated percent of sampled area",
+                     "Estimated hectares",
+                     paste0(c("Lower confidence bound of percent area (", "Upper confidence bound of percent area ("), confidence, "%, Goodman multinomial) "),
+                     paste0(c("Lower confidence bound of hectares (", "Upper confidence bound of hectares ("), confidence, "%, Goodman multinomial) "))
+
+
+fates <- unique(c(aim_points[["fate"]], lmf_points@data[["fate"]]))
+
+point_counts <- do.call(rbind,
+                        lapply(X = split(rbind(aim_points@data[, c("wgtcat", "fate")], lmf_points@data[, c("wgtcat", "fate")]),
+                                         rbind(aim_points@data[, c("wgtcat", "fate")], lmf_points@data[, c("wgtcat", "fate")])$wgtcat),
+                               fates = fates,
+                               FUN = function(X, fates){
+                                 output <- data.frame(wgtcat = X[["wgtcat"]][1],
+                                                      stringsAsFactors = FALSE)
+                                 for (fate in fates) {
+                                   output[[paste0("count_", fate)]] <- sum(X[["fate"]] %in% fate)
+                                 }
+                                 rownames(output) <- NULL
+                                 return(output)
+                               }))
+
+wgtcat_summary <- merge(x = wgtcat_summary,
+                        y = point_counts,
+                        all.x = TRUE)
+
+for (fate in fates) {
+  wgtcat_summary[[paste0("count_", fate)]][is.na(wgtcat_summary[[paste0("count_", fate)]])] <- 0
+}
+
+wgtcat_summary[["in_inference"]] <- !is.na(wgtcat_summary[["sum_relwgts"]])
+
+wgtcat_summary <- wgtcat_summary[, c("wgtcat", "area", "area_units",
+                                     "observed_point_count", paste0("count_", fates),
+                                     "observed_proportion",
+                                     "observed_area", "unobserved_area",
+                                     "in_inference")]
+
+names(wgtcat_summary) <- c(wgtcats_var, "area", "area_units",
+                           "observed_point_count", paste0("count_", fates),
+                           "observed_proportion",
+                           "observed_area", "unobserved_area",
+                           "in_inference")
+
+wgtcats$wgtcat <-  as.character(wgtcats$wgtcat)
+
+wgtcat_summary <- merge(x = wgtcat_summary,
+                        y = wgtcats[, c("wgtcat_name", "wgtcat")],
+                        by.x = wgtcats_var,
+                        by.y = "wgtcat")
+
+wgtcat_summary <- wgtcat_summary[, c(wgtcats_var, "area", "area_units",
+                                     "observed_point_count", paste0("count_", fates),
+                                     "observed_proportion",
+                                     "observed_area", "unobserved_area",
+                                     "in_inference", "wgtcat_name")]
+
+# Add in where they're from
+aim_points[["source"]] <- "AIM"
+lmf_points[["source"]] <- "LMF"
+all_points <- rbind(aim_points[, c("unique_id", "fate", "wgtcat", "source")], lmf_points[,c("unique_id", "fate", "wgtcat", "source")])
+
+all_points <- sp::merge(x = all_points,
+                        y = point_weights,
+                        all = FALSE)
+
+all_points <- sp::merge(x = all_points,
+                        y = ratings[, c(ratings_idvar, sua_name)],
+                        by.x = "unique_id",
+                        by.y = ratings_idvar,
+                        all.x = TRUE)
+
+# Added area_ratio col header here 8/26
+names(all_points@data) <- c("plot_id", "fate", "wgtcat", "source", "segment", "area_ratio", "aim", "lmf", "observed","relwgt",  
+                            "wgt", "reporting_unit", "rating")
+
+all_points <- all_points[, c("plot_id", "rating", "fate", "reporting_unit", "wgtcat", "source", "wgt")]
+
+```
+
+# Reformat for Idaho
+```{r}
+analysis <- select(analysis,
+                   "Rating",
+                   "Habitat Type",                                                 
+ "Indicator",                                                      
+ "Number of plots",                                                   
+ "Estimated percent of sampled area",                                 
+ "Lower confidence bound of percent area (80%, Goodman multinomial) ",
+ "Upper confidence bound of percent area (80%, Goodman multinomial) ",
+  "Estimated hectares",
+ "Lower confidence bound of hectares (80%, Goodman multinomial) ",
+"Upper confidence bound of hectares (80%, Goodman multinomial) ")
+
+# reorder ratings
+analysis$Rating <- as.factor(analysis$Rating)
+analysis$Rating <-  factor(analysis$Rating, levels = c("Suitable", "Marginal", "Unsuitable"))
+analysis <- analysis[order(analysis$Rating),]
+
+# Area totals
+area_summary <- colSums(x = wgtcat_summary[, c("area","observed_point_count", paste0("count_", fates), "observed_area", "unobserved_area")]) 
+
+area_summary <-  c("Totals:",
+                   sum(wgtcat_summary[["area"]]),
+                   "NA",
+                   colSums(x = wgtcat_summary[, c("observed_point_count", paste0("count_", fates))]),
+                   "NA",
+                   colSums(x = wgtcat_summary[, c("observed_area", "unobserved_area")]),
+                   "total_inference_area" = sum(wgtcat_summary[["area"]][wgtcat_summary[["in_inference"]]==TRUE]),
+                   "NA")
+area_summary <- as.data.frame(area_summary)
+rownames(area_summary) <- colnames(wgtcat_summary)
+wgtcat_summary <- rbind(wgtcat_summary,t(area_summary))
+
+
+```
+
+### Writing Outputs
+```{r}
+write.csv(point_weights,
+          file = paste0(output_path, "/",
+                        output_filename,
+                        "_pointweights_",
+                        date, ".csv"),
+          row.names = FALSE)
+write.csv(wgtcat_summary,
+          file = paste0(output_path, "/",
+                        output_filename,
+                        "_wgtcatsummary_",
+                        date, ".csv"),
+          row.names = FALSE)
+write.csv(analysis,
+          file = paste0(output_path, "/",
+                        output_filename,
+                        "_analysis_",
+                        date, ".csv"),
+          row.names = FALSE)
+
+rgdal::writeOGR(all_points,
+                dsn = paste0(output_path, "/",
+                        output_filename),
+                layer = paste0(output_filename,
+                               "_points_",
+                               date),
+                driver = "ESRI Shapefile",
+                overwrite_layer = TRUE)
+
+wgtcat_spdf <- sp::merge(x = wgtcat_spdf,
+                         y = wgtcat_summary,
+                         by = "wgtcat")
+
+rgdal::writeOGR(wgtcat_spdf,
+                dsn = paste0(output_path, "/",
+                        output_filename),
+                layer = paste0(output_filename,
+                               "_wgtcats_",
+                               date),
+                driver = "ESRI Shapefile",
+                overwrite_layer = TRUE)
+```
